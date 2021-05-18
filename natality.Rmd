@@ -153,7 +153,7 @@ potential treatments, covariates, and outcomes.
 ```{r}
 # select data
 Xnames <- with(natl_names, c(general, mother))
-Ynames <- with(natl_names, c(newborn, congntl))
+Ynames <- with(natl_names, c(child, newborn, congntl))
 Wnames <- with(natl_names, oth_risk)
 ```
 
@@ -190,10 +190,10 @@ Wdata_fct_expanded <-
 First we prepare our data.
 
 ```{r}
-Yname <- "alcosyn"
+Yname <- "dbirwt"
 Wname <- "alcohol"
 
-Yname_expanded <- "alcosynyes"
+Yname_expanded <- "dbirwt"
 Wname_expanded <- "alcoholyes"
 
 Xname_full <- c(names(Xdata_num), names(Xdata_fct))
@@ -228,7 +228,15 @@ Xname_expanded <- intersect(Xname_full_expanded, names(data_expanded))
 print(paste(nrow(data) / subset_size, "of data doesn't contain NAs"))
 ```
 
-Our variable
+Our treatment and outcome have the following counts:
+
+```{r}
+data %>%
+  group_by(W) %>%
+  ggplot(aes(x = Y)) +
+  geom_histogram(alpha=0.6, position = 'identity') +
+  facet_grid(W ~ ., scales = "free")
+```
 
 Estimating the propensity score using logistic regression and random forest.
 
@@ -395,7 +403,6 @@ print(tauhat_lin_logistic_aipw)
 ## Missing covariates
 
 ```{r}
-# filter to desired data
 data <- data_full %>%
   drop_na(Y, W)
 
@@ -406,7 +413,11 @@ data_expanded <- data_full_expanded %>%
 # required since data_expanded drops columns
 Xname_expanded <- intersect(Xname_full_expanded, names(data_expanded))
 
-print(paste(nrow(data) / subset_size, "of data doesn't contain NAs"))
+print(paste(nrow(data_expanded) / subset_size, "of data doesn't contain NAs"))
+
+# subsample for speed
+data_expanded <- data_expanded %>%
+  sample_n(as.integer(1e5))
 ```
 
 ```{r results='hide'}
