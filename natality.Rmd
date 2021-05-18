@@ -36,14 +36,14 @@ source("utils.R")
 year <- 2002
 ```
 
-To begin with we sample 10,000 birth records uniformly at random and preprocess
+To begin with we sample 500,000 birth records uniformly at random and preprocess
 their columns types from the raw CSV to encode each variable as an integer or 
 an ordered or unordered factor. All values coded as missing or undetermined
 are considered NA.
 
 ```{r}
 subset <- FALSE
-subset_size <- as.integer(1e5)
+subset_size <- as.integer(5e5)
 subset_fname <- paste0("../data/subset_rds/natl", year, ".rds")
 
 if (subset) {
@@ -55,11 +55,11 @@ if (subset) {
   write_rds(natl_raw, subset_fname, compress = "gz")
 }
 
-natl_raw <- read_rds(subset_fname)
+#natl_raw <- read_rds(subset_fname)
 ```
 
 ```{r}
-preprocess <- TRUE
+preprocess <- FALSE
 
 preprocessed_fname <- paste0("../data/preprocessed_rds/natl", year, ".rds")
 
@@ -67,8 +67,7 @@ if (preprocess) {
   # load preprocess_natl for this year
   source(paste0("preprocess/preprocess_natl", year, ".R"))
   
-  subset_fname <- paste0("../data/subset_rds/natl", year, ".rds")
-  natl <- read_rds(subset_fname) %>%
+  natl <- read_rds(natl_raw) %>%
     preprocess_natl()
   
   write_rds(natl, preprocessed_fname, compress = "gz")
@@ -156,8 +155,6 @@ potential treatments, covariates, and outcomes.
 Xnames <- with(natl_names, c(general, mother))
 Ynames <- with(natl_names, c(newborn, congntl))
 Wnames <- with(natl_names, oth_risk)
-
-var_names <- unique(c(Xnames, Ynames, Wnames))
 ```
 
 Some of our models require factors to be expanded into binary attributes.
@@ -193,53 +190,61 @@ Wdata_fct_expanded <-
 First we prepare our data.
 
 ```{r}
-Y <- "alcosyn"
-W <- "alcohol"
+Yname <- "alcosyn"
+Wname <- "alcohol"
 
-Y_expanded <- "alcosynyes"
-W_expanded <- "alcoholyes"
+Yname_expanded <- "alcosynyes"
+Wname_expanded <- "alcoholyes"
 
-X <- c(names(Xdata_num), names(Xdata_fct))
-X_expanded <- c(names(Xdata_num), names(Xdata_fct_expanded))
+Xname_full <- c(names(Xdata_num), names(Xdata_fct))
+Xname_full_expanded <- c(names(Xdata_num), names(Xdata_fct_expanded))
 
-data <- bind_cols(Ydata_num, Ydata_fct, 
-                  Wdata_num, Wdata_fct, 
-                  Xdata_num, Xdata_fct) %>%
-  select(all_of(c(Y, W, X))) %>%
-  rename(Y = matches(Y), W = matches(W))
+data_full <- bind_cols(
+    Ydata_num, Ydata_fct, 
+    Wdata_num, Wdata_fct, 
+    Xdata_num, Xdata_fct) %>%
+  select(all_of(c(Yname, Wname, Xname_full))) %>%
+  rename(Y = matches(Yname), W = matches(Wname))
 
-data_expanded <- bind_cols(
+data_full_expanded <- bind_cols(
     Ydata_num, Ydata_fct_expanded, 
     Wdata_num, Wdata_fct_expanded, 
     Xdata_num, Xdata_fct_expanded
   ) %>%
-  select(all_of(c(Y_expanded, W_expanded, X_expanded))) %>%
-  rename(Y = matches(Y_expanded), W = matches(W_expanded))
+  select(all_of(c(Yname_expanded, Wname_expanded, Xname_full_expanded))) %>%
+  rename(Y = matches(Yname_expanded), W = matches(Wname_expanded))
 
-data <- data %>%
+# filter to desired data
+data <- data_full %>%
   drop_na()
 
-data_expanded <- data_expanded %>%
+data_expanded <- data_full_expanded %>%
   drop_na() %>%
-  remove_constant(quiet = FALSE)
+  remove_constant(quiet = FALSE) # remove constant columns
 
-X_expanded <- intersect(X_expanded, names(data_expanded))
+# required since data_expanded drops columns
+Xname_expanded <- intersect(Xname_full_expanded, names(data_expanded))
 
 print(paste(nrow(data) / subset_size, "of data doesn't contain NAs"))
 ```
 
-### ATE Estimation
+Our variable
 
-Estimating the propensity score using logistic regression.
+Estimating the propensity score using logistic regression and random forest.
 
 ```{r results='hide'}
-Xmod = as.matrix(data_expanded[,X_expanded])
+Xmod = as.matrix(data_expanded[,Xname_expanded])
 Ymod = data_expanded$Y
 Wmod = data_expanded$W
+```
 
+```{r}
 # Computing the propensity score by logistic regression of W on X.
-p_logistic.fit <- cv.glmnet(Xmod, Wmod, family = "binomial", relax=FALSE, trace=FALSE)
-p_logistic <- predict(p_logistic.fit, newx = Xmod, type = "response")
+p_logistic.fit <- cv.glmnet(Xmod, Wmod, family = "binomial", relax=FALSE, trace=TRUE)
+```
+
+```{r}
+p_logistic <- predict(p_logistic.fit, newx = Xmod, type = "response")[,1]
 ```
 
 We can examine the resulting coefficients (note variables are unnormalized and
@@ -260,7 +265,21 @@ plot(p_logistic.fit)
 ```
 
 ```{r message=FALSE}
-cal_plot(Wmod, p_logistic, "Propensity Score Calibration", bins = 10, lim = c(0,1))
+cal_plot(Wmod, p_logistic, "Propensity Score Calibration, Logistic", bins = 10, lim = c(0,0.1))
+```
+We can also use a forest to model the propensity score.
+
+```{r}
+# Computing the propensity score by logistic regression of W on X.
+#p_forest.fit <- regression_forest(Xmod, Wmod, num.trees = 1000)
+```
+
+```{r}
+#p_forest <- predict(p_forest.fit, Xmod)$predictions
+```
+
+```{r message=FALSE}
+#cal_plot(Wmod, p_forest, "Propensity Score Calibration, RF", bins = 10, lim = c(0,1))
 ```
 
 Estimating the ATE using multiple methods. First, for comparison, the raw difference
@@ -291,6 +310,8 @@ tauhat_difference_in_means <- difference_in_means(data_expanded, "Y", "W")
 tauhat_difference_in_means
 ```
 
+Regression adjustment.
+
 ```{r}
 ate_condmean_ols <- function(dataset, Yvar, Wvar) {
   df_mod_centered <- data.frame(scale(dataset, center = TRUE, scale = FALSE))
@@ -307,6 +328,8 @@ tauhat_ols <- ate_condmean_ols(data_expanded, "Y", "W")
 print(tauhat_ols)
 ```
 
+IPW
+
 ```{r}
 ipw <- function(dataset, Yvar, Wvar, p) {
   W <- dataset[[Wvar]]
@@ -320,6 +343,8 @@ ipw <- function(dataset, Yvar, Wvar, p) {
 tauhat_logistic_ipw <- ipw(data_expanded, "Y", "W", p_logistic)
 print(tauhat_logistic_ipw)
 ```
+
+Propensity-weighted OLS.
 
 ```{r}
 prop_score_ols <- function(dataset, Yvar, Wvar, p) {
@@ -337,6 +362,8 @@ prop_score_ols <- function(dataset, Yvar, Wvar, p) {
 tauhat_pscore_ols <- prop_score_ols(data_expanded, "Y", "W", p_logistic)
 print(tauhat_pscore_ols)
 ```
+
+AIPW
 
 ```{r}
 aipw_ols <- function(dataset, Yvar, Wvar, p) {
@@ -363,6 +390,48 @@ aipw_ols <- function(dataset, Yvar, Wvar, p) {
 
 tauhat_lin_logistic_aipw <- aipw_ols(data_expanded, "Y", "W", p_logistic)
 print(tauhat_lin_logistic_aipw)
+```
+
+## Missing covariates
+
+```{r}
+# filter to desired data
+data <- data_full %>%
+  drop_na(Y, W)
+
+data_expanded <- data_full_expanded %>%
+  drop_na(Y, W) %>%
+  remove_constant(quiet = FALSE) # remove constant columns
+
+# required since data_expanded drops columns
+Xname_expanded <- intersect(Xname_full_expanded, names(data_expanded))
+
+print(paste(nrow(data) / subset_size, "of data doesn't contain NAs"))
+```
+
+```{r results='hide'}
+Xmod = as.matrix(data_expanded[,Xname_expanded])
+Ymod = data_expanded$Y
+Wmod = data_expanded$W
+
+na_fracs <- colMeans(is.na(data))
+perm <- order(abs(as.vector(na_fracs)), decreasing = TRUE)
+vars <- names(na_fracs)[perm]
+na_fracs <- na_fracs[perm]
+
+tibble(vars = vars, na_fracs = na_fracs) %>%
+  head(5)
+```
+
+Causal forest.
+
+```{r}
+tau.forest <- causal_forest(Xmod, Ymod, Wmod)
+```
+
+```{r}
+tau.hat <- predict(tau.forest)$predictions
+hist(tau.hat)
 ```
 
 
