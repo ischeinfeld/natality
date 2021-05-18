@@ -1,6 +1,8 @@
 ---
-title: "US Natality Data: Causal Inference Case Study"
-output: html_notebook
+title: 'US Natality Data: Causal Inference Case Study'
+output:
+  html_document:
+    df_print: paged
 ---
   
 ```{r echo=TRUE, warning=FALSE, message=FALSE}
@@ -21,8 +23,11 @@ library(estimatr)
 library(ade4)  
 library(viridis)
 library(gridExtra)
+library(janitor)
 
 rm(list = ls())
+
+source("utils.R")
 ```
 
 # Subset and preprocess data
@@ -188,12 +193,13 @@ Wdata_fct_expanded <-
 First we prepare our data.
 
 ```{r}
-Y <- "cleftlp"
-W <- "tobacco"
-X <- c(names(Xdata_num), names(Xdata_fct))
+Y <- "alcosyn"
+W <- "alcohol"
 
-Y_expanded <- "cleftlpyes"
-W_expanded <- "tobaccoyes"
+Y_expanded <- "alcosynyes"
+W_expanded <- "alcoholyes"
+
+X <- c(names(Xdata_num), names(Xdata_fct))
 X_expanded <- c(names(Xdata_num), names(Xdata_fct_expanded))
 
 data <- bind_cols(Ydata_num, Ydata_fct, 
@@ -214,7 +220,10 @@ data <- data %>%
   drop_na()
 
 data_expanded <- data_expanded %>%
-  drop_na()
+  drop_na() %>%
+  remove_constant(quiet = FALSE)
+
+X_expanded <- intersect(X_expanded, names(data_expanded))
 
 print(paste(nrow(data) / subset_size, "of data doesn't contain NAs"))
 ```
@@ -229,7 +238,7 @@ Ymod = data_expanded$Y
 Wmod = data_expanded$W
 
 # Computing the propensity score by logistic regression of W on X.
-p_logistic.fit <- cv.glmnet(Xmod, Wmod, family = "binomial", relax=FALSE, trace=TRUE)
+p_logistic.fit <- cv.glmnet(Xmod, Wmod, family = "binomial", relax=FALSE, trace=FALSE)
 p_logistic <- predict(p_logistic.fit, newx = Xmod, type = "response")
 ```
 
@@ -247,5 +256,113 @@ tibble(vars = vars, coefs = coefs) %>%
 ```
 
 ```{r}
-#plot(p_logistic.fit)
+plot(p_logistic.fit)
 ```
+
+```{r message=FALSE}
+cal_plot(Wmod, p_logistic, "Propensity Score Calibration", bins = 10, lim = c(0,1))
+```
+
+Estimating the ATE using multiple methods. First, for comparison, the raw difference
+in means estimator:
+  
+```{r}
+difference_in_means <- function(dataset, Yvar, Wvar) {
+  # Filter treatment / control observations, pulls outcome variable as a vector
+  y1 <- dataset %>% dplyr::filter(get(Wvar) == 1) %>% dplyr::pull(get(Yvar))
+  y0 <- dataset %>% dplyr::filter(get(Wvar) == 0) %>% dplyr::pull(get(Yvar))
+  
+  n1 <- sum(dataset[,Wvar])     # Number of obs in treatment
+  n0 <- sum(1 - dataset[,Wvar]) # Number of obs in control
+  
+  # Difference in means is ATE
+  tauhat <- mean(y1) - mean(y0)
+  
+  # 95% Confidence intervals
+  se_hat <- sqrt( var(y0)/(n0-1) + var(y1)/(n1-1) )
+  lower_ci <- tauhat - 1.96 * se_hat
+  upper_ci <- tauhat + 1.96 * se_hat
+  
+  return(c(ATE = tauhat, lower_ci = lower_ci, upper_ci = upper_ci))
+}
+
+tauhat_difference_in_means <- difference_in_means(data_expanded, "Y", "W")
+
+tauhat_difference_in_means
+```
+
+```{r}
+ate_condmean_ols <- function(dataset, Yvar, Wvar) {
+  df_mod_centered <- data.frame(scale(dataset, center = TRUE, scale = FALSE))
+  
+  lm.interact <- lm(as.formula(paste(Yvar, "~ . * ", Wvar)),
+                   data = df_mod_centered)
+  tau.hat <- as.numeric(coef(lm.interact)[Wvar])
+  se.hat <- as.numeric(sqrt(vcovHC(lm.interact)[Wvar, Wvar]))
+  
+  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+}
+
+tauhat_ols <- ate_condmean_ols(data_expanded, "Y", "W")
+print(tauhat_ols)
+```
+
+```{r}
+ipw <- function(dataset, Yvar, Wvar, p) {
+  W <- dataset[[Wvar]]
+  Y <- dataset[[Yvar]]
+  G <- ((W - p) * Y) / (p * (1 - p))
+  tau.hat <- mean(G)
+  se.hat <- sqrt(var(G) / (length(G) - 1))
+  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+}
+
+tauhat_logistic_ipw <- ipw(data_expanded, "Y", "W", p_logistic)
+print(tauhat_logistic_ipw)
+```
+
+```{r}
+prop_score_ols <- function(dataset, Yvar, Wvar, p) {
+  W <- dataset[[Wvar]]
+  Y <- dataset[[Yvar]]
+  # Computing weights
+  weights <- (W / p) + ((1 - W) / (1 - p))
+  # OLS
+  lm.fit <- lm(Y ~ W, data = dataset, weights = weights)
+  tau.hat = as.numeric(coef(lm.fit)["W"])
+  se.hat = as.numeric(sqrt(vcovHC(lm.fit)["W", "W"]))
+  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+}
+
+tauhat_pscore_ols <- prop_score_ols(data_expanded, "Y", "W", p_logistic)
+print(tauhat_pscore_ols)
+```
+
+```{r}
+aipw_ols <- function(dataset, Yvar, Wvar, p) {
+  ols.fit <-  lm(as.formula(paste(Yvar, "~ . * ", Wvar)), data = dataset)
+  
+  dataset.treatall <- dataset
+  dataset.treatall <- dataset.treatall %>%
+    mutate(!!Wvar := 1)
+  treated_pred = predict(ols.fit, dataset.treatall)
+  
+  dataset.treatnone = dataset
+  dataset.treatall <- dataset.treatnone %>%
+    mutate(!!Wvar := 0)
+  control_pred = predict(ols.fit, dataset.treatnone)
+  
+  actual_pred = predict(ols.fit, dataset)
+  
+  G <- treated_pred - control_pred +
+    ((dataset[[Wvar]] - p) * (dataset[[Yvar]] - actual_pred)) / (p * (1 - p))
+  tau.hat <- mean(G)
+  se.hat <- sqrt(var(G) / (length(G) - 1))
+  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+}
+
+tauhat_lin_logistic_aipw <- aipw_ols(data_expanded, "Y", "W", p_logistic)
+print(tauhat_lin_logistic_aipw)
+```
+
+

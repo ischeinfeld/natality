@@ -34,7 +34,7 @@ preprocess_natl <- function(natl_raw) {
               cntrspop = factor(cntrspop, ordered = TRUE, levels = lev_padded(c(0:5,9))),
               dmage = as.integer(dmage),
               ormoth = factor(ormoth, levels = lev_padded(0:5)),
-              mrace = factor(mrace, levels = lev_unpadded(c(0:8,18,28,38,48,58,68,78))),
+              mrace = factor(mrace, levels = lev_unpadded(c(0:7,18,28,38,48,58,68,78))),
               mrace3 = factor(mrace3, levels = lev_padded(1:3)),
               dmeduc = as.integer(dmeduc) %>% na_if(99),
               dmar = as.integer(dmar) %>% na_if(9) %>% pmin(2) %>% factor(levels = lev_padded(1:2)),
