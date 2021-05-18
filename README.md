@@ -1,2 +1,2 @@
 # natality
-US Natality Data Analysis Case Study
+US Natality Data: Causal Inference Case Study

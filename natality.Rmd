@@ -1,0 +1,313 @@
+---
+title: "US Natality Data: Causal Inference Case Study"
+output: html_notebook
+---
+  
+```{r echo=TRUE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, comment=NA)
+
+library(ggplot2)   # plot
+#library(devtools)  # install from GitHub 
+library(dplyr)     # tables
+library(glmnet)    # lasso
+library(grf)       # random forests
+library(rpart)
+library(sandwich)  # for robust CIs
+library(tidyverse)
+library(plot3D)
+library(psych)
+#library(causalTree)
+library(estimatr)
+library(ade4)  
+library(viridis)
+library(gridExtra)
+
+rm(list = ls())
+#setwd("../project/")
+```
+
+# Build data descriptions
+
+```{r}
+load("../data/natl2002.rdata")
+```
+
+```{r}
+sapply(natl2002, function (col) mean(is.na(col)))
+```
+
+```{r}
+natl <- natl2002 %>%
+  sample_n(10000) %>%
+  as_tibble()
+```
+
+```{r}
+sapply(natl, unique)
+```
+
+
+```{r}
+preprocess <- TRUE
+if (preprocess) {
+  
+  natl_raw <- read_csv("../data/natl2002.csv",
+                       col_types = cols(.default = col_character())) %>%
+    sample_frac(0.05)
+  
+  natl <- preprocess_natl(natl_raw)
+  write_rds(natl, "natl1998.rds", compress = "gz")
+}
+
+natl1998 <- read_rds("natl1998.rds")
+```
+
+
+# Prepare Data
+
+Load raw data.
+
+```{r}
+preprocess <- TRUE
+if (preprocess) {
+  
+  natl_raw <- read_csv("natl1998.csv.zip",
+                       col_types = cols(.default = col_character())) %>%
+    sample_frac(0.05)
+  
+  natl <- preprocess_natl(natl_raw)
+  write_rds(natl, "natl1998.rds", compress = "gz")
+}
+
+natl1998 <- read_rds("natl1998.rds")
+```
+
+Prepare data for analysis.
+
+```{r}
+# current codes only binary factors
+data <- natl1998 %>%
+  # create delivery method and previous cs variables
+  mutate(cesarean = fct_collapse(delmeth5,
+                                 notreported = c("1", "2"),
+                                 reported = c("3", "4")),
+         cshist = fct_collapse(delmeth5,
+                               reported = c("2", "4"),
+                               notreported = c("1", "3"))) %>%
+  
+  # filter to subset to be considered
+  filter(dplural == 1,   # only single births
+         pldel == "1")  # only hospital births
+
+# variables available for analysis
+natl_vars <- list(
+  general = c("datayear",
+              "statenat"),  # state
+  mother = c("dmage",       # mother's age
+             "dlivord",   # number of previous live births + 1
+             "cshist",    # had previous cesarean section (created below)
+             "mrace3"
+             #"dgestat",   # gestation in weeks
+             #"dbirwt",    # birth weight in grams
+             #"cesarean",  # cesarean birth (created below)
+  ),  
+  med_risk = c("anemia", "cardiac", "lung", "diabetes", "herpes", "hydra", "hemo",
+               "chyper", "phyper", "eclamp", "incervix", "pre4000", "preterm",
+               "renal", "rh", "uterine", "othermr"),
+  oth_risk = c("tobacco", "drink", "wtgain"),
+  obstetrc = c("amnio", "monitor", "induct", "stimula", "tocol", "ultras", "otherob"),
+  lab_comp = c("febrile", "meconium", "rupture", "abruptio", "preplace", "excebld",
+               "seizure", "precip", "prolong", "dysfunc", "breech", "cephalo",
+               "cord", "anesthe", "distress", "otherlb"),
+  newborn = c("nanemia", "injury", "alcosyn", "hyaline", "meconsyn", "venl30",
+              "ven30m", "nseiz", "otherab"),
+  congntl = c("anen", "spina", "hydro", "microce", "nervous", "heart", "circul",
+              "rectal", "tracheo", "omphalo", "gastro", "genital", "renalage", 
+              "urogen", "cleftlp", "adactyly", "clubfoot", "hernia", "musculo"))
+
+# select data
+Xvars <- with(natl_vars, c(mother, med_risk))
+Yvars <- with(natl_vars, c(newborn, congntl))
+Wvars <- with(natl_vars, c(general, oth_risk))
+
+vars <- unique(c(Xvars, Yvars, Wvars))
+
+# current codes only binary factors
+data <- data %>%
+  # select variables
+  select(all_of(vars)) %>%
+  # drop rows with na X or Y values, keeping W NAs
+  drop_na(all_of(c(Xvars, Yvars)))
+```
+
+```{r}
+# Expand factor variables.
+Xdata_num <- data %>% select(all_of(Xvars)) %>% select_if(is.numeric)
+Ydata_num <- data %>% select(all_of(Yvars)) %>% select_if(is.numeric)
+Wdata_num <- data %>% select(all_of(Wvars)) %>% select_if(is.numeric)
+
+Xdata_fct <- data %>% select(all_of(Xvars)) %>% select_if(is.factor)
+Ydata_fct <- data %>% select(all_of(Yvars)) %>% select_if(is.factor)
+Wdata_fct <- data %>% select(all_of(Wvars)) %>% select_if(is.factor)
+
+# expand factors
+Xdata_fct_expanded <- 
+  model.matrix(~., model.frame(~., Xdata_fct, na.action=na.pass))[,-1] %>% 
+  as_tibble()
+
+Ydata_fct_expanded <- 
+  model.matrix(~., model.frame(~., Ydata_fct, na.action=na.pass))[,-1] %>% 
+  as_tibble()
+
+Wdata_fct_expanded <- 
+  model.matrix(~., model.frame(~., Wdata_fct, na.action=na.pass))[,-1] %>% 
+  as_tibble()
+
+Yvar <- "cleftlpreported"
+Wvar <- "tobaccoreported"
+Xvar <- c(names(Xdata_num), names(Xdata_fct_expanded))
+
+model_matrix <- bind_cols(Ydata_num, Ydata_fct_expanded, 
+                          Wdata_num, Wdata_fct_expanded, 
+                          Xdata_num, Xdata_fct_expanded) %>%
+  select(all_of(c(Yvar, Wvar, Xvar)))
+```
+
+Drop NA W values.
+
+```{r}
+dim(model_matrix)
+
+model_matrix <- model_matrix %>% 
+  drop_na(Wvar)
+
+dim(model_matrix)
+```
+
+# ATE Estimation
+
+Estimating the propensity score using logistic regression.
+
+```{r results='hide'}
+Xmod = as.matrix(model_matrix[,Xvar])
+Ymod = model_matrix[[Yvar]]
+Wmod = model_matrix[[Wvar]]
+
+# Computing the propensity score by logistic regression of W on X.
+p_logistic.fit <- cv.glmnet(Xmod, Wmod, family = "binomial", relax=TRUE, trace=TRUE)
+p_logistic <- predict(p_logistic.fit, newx = Xmod, type = "response")
+```
+
+```{r}
+coef(p_logistic.fit)
+```
+
+```{r}
+plot(p_logistic.fit)
+```
+
+```{r message=FALSE}
+cal_plot(Wmod, p_logistic, "Propensity Score Calibration", bins = 10, lim = c(0,1))
+```
+
+Estimating the ATE using multiple methods. First, for comparison, the raw difference
+in means estimator:
+  
+  ```{r}
+difference_in_means <- function(dataset, Yvar, Wvar) {
+  # Filter treatment / control observations, pulls outcome variable as a vector
+  y1 <- dataset %>% dplyr::filter(get(Wvar) == 1) %>% dplyr::pull(get(Yvar))
+  y0 <- dataset %>% dplyr::filter(get(Wvar) == 0) %>% dplyr::pull(get(Yvar))
+  
+  n1 <- sum(dataset[,Wvar])     # Number of obs in treatment
+  n0 <- sum(1 - dataset[,Wvar]) # Number of obs in control
+  
+  # Difference in means is ATE
+  tauhat <- mean(y1) - mean(y0)
+  
+  # 95% Confidence intervals
+  se_hat <- sqrt( var(y0)/(n0-1) + var(y1)/(n1-1) )
+  lower_ci <- tauhat - 1.96 * se_hat
+  upper_ci <- tauhat + 1.96 * se_hat
+  
+  return(c(ATE = tauhat, lower_ci = lower_ci, upper_ci = upper_ci))
+}
+
+tauhat_difference_in_means <- difference_in_means(model_matrix, Yvar, Wvar)
+
+tauhat_difference_in_means
+```
+
+```{r}
+ate_condmean_ols <- function(dataset, Yvar, Wvar) {
+  df_mod_centered = data.frame(scale(dataset, center = TRUE, scale = FALSE))
+  
+  lm.interact = lm(as.formula(paste(Yvar, "~ . * ", Wvar)),
+                   data = df_mod_centered)
+  tau.hat = as.numeric(coef(lm.interact)[Wvar])
+  se.hat = as.numeric(sqrt(vcovHC(lm.interact)[Wvar, Wvar]))
+  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+}
+
+tauhat_ols <- ate_condmean_ols(model_matrix, Yvar, Wvar)
+print(tauhat_ols)
+```
+
+```{r}
+ipw <- function(dataset, Yvar, Wvar, p) {
+  W <- dataset[[Wvar]]
+  Y <- dataset[[Yvar]]
+  G <- ((W - p) * Y) / (p * (1 - p))
+  tau.hat <- mean(G)
+  se.hat <- sqrt(var(G) / (length(G) - 1))
+  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+}
+
+tauhat_logistic_ipw <- ipw(model_matrix, Yvar, Wvar, p_logistic)
+print(tauhat_logistic_ipw)
+```
+
+```{r}
+prop_score_ols <- function(dataset, Yvar, Wvar, p) {
+  W <- dataset[[Wvar]]
+  Y <- dataset[[Yvar]]
+  # Computing weights
+  weights <- (W / p) + ((1 - W) / (1 - p))
+  # OLS
+  lm.fit <- lm(Y ~ W, data = dataset, weights = weights)
+  tau.hat = as.numeric(coef(lm.fit)["W"])
+  se.hat = as.numeric(sqrt(vcovHC(lm.fit)["W", "W"]))
+  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+}
+
+tauhat_pscore_ols <- prop_score_ols(model_matrix, Yvar, Wvar, p_logistic)
+print(tauhat_pscore_ols)
+```
+
+```{r}
+aipw_ols <- function(dataset, Yvar, Wvar, p) {
+  ols.fit <-  lm(as.formula(paste(Yvar, "~ . * ", Wvar)), data = dataset)
+  
+  dataset.treatall <- dataset
+  dataset.treatall <- dataset.treatall %>%
+    mutate(!!Wvar := 1)
+  treated_pred = predict(ols.fit, dataset.treatall)
+  
+  dataset.treatnone = dataset
+  dataset.treatall <- dataset.treatnone %>%
+    mutate(!!Wvar := 0)
+  control_pred = predict(ols.fit, dataset.treatnone)
+  
+  actual_pred = predict(ols.fit, dataset)
+  
+  G <- treated_pred - control_pred +
+    ((dataset[[Wvar]] - p) * (dataset[[Yvar]] - actual_pred)) / (p * (1 - p))
+  tau.hat <- mean(G)
+  se.hat <- sqrt(var(G) / (length(G) - 1))
+  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+}
+
+tauhat_lin_logistic_aipw <- aipw_ols(model_matrix, Yvar, Wvar, p_logistic)
+print(tauhat_lin_logistic_aipw)
+```
+
