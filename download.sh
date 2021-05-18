@@ -7,6 +7,6 @@ URL="https://data.nber.org/natality"
 cd $DATADIR
 echo $PWD
 for YEAR in $YEARS
-  do curl -O "$URL/$YEAR/natl$YEAR.rdata"
+  do curl -O "$URL/$YEAR/natl$YEAR.csv"
 done
 cd $CURRDIR
