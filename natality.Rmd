@@ -4,30 +4,26 @@ output:
   html_document:
     df_print: paged
 ---
-  
+
 ```{r echo=TRUE, warning=FALSE, message=FALSE}
 knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, comment=NA)
 
 library(ggplot2)   # plot
-#library(devtools)  # install from GitHub 
 library(dplyr)     # tables
+library(readr)     # reading
+library(stringr)   # strings
+library(purrr)     # fp
+library(tidyr)     # remove_na
+library(forcats)   # factor recode
 library(glmnet)    # lasso
 library(grf)       # random forests
-library(rpart)
-library(sandwich)  # for robust CIs
-library(tidyverse)
-library(plot3D)
-library(psych)
-#library(causalTree)
-library(estimatr)
-library(ade4)  
-library(viridis)
-library(gridExtra)
-library(janitor)
+library(janitor)   # remove_constant columns
+library(corrplot)  # plot correlation matrix
+#library(sufrep)    # sufficient representations
+source("make_encoder.R")
 
-rm(list = ls())
-
-source("utils.R")
+rm(list = ls())    # reset environment
+source("utils.R")  # import helpers
 ```
 
 # Subset and preprocess data
@@ -43,19 +39,17 @@ are considered NA.
 
 ```{r}
 subset <- FALSE
-subset_size <- as.integer(5e5)
+subset_size <- as.integer(1e5)
 subset_fname <- paste0("../data/subset_rds/natl", year, ".rds")
 
 if (subset) {
   raw_fname <- paste0("../data/raw_csv/natl", year, ".csv")
-  natl_raw <- read_csv(raw_fname,
-                   col_types = cols(.default = col_character())) %>%
+  natl_raw <- 
+    read_csv(raw_fname, col_types = cols(.default = col_character())) %>%
     sample_n(subset_size)
-  
+
   write_rds(natl_raw, subset_fname, compress = "gz")
 }
-
-#natl_raw <- read_rds(subset_fname)
 ```
 
 ```{r}
@@ -67,7 +61,7 @@ if (preprocess) {
   # load preprocess_natl for this year
   source(paste0("preprocess/preprocess_natl", year, ".R"))
   
-  natl <- read_rds(natl_raw) %>%
+  natl <- read_rds(subset_fname) %>%
     preprocess_natl()
   
   write_rds(natl, preprocessed_fname, compress = "gz")
@@ -76,7 +70,69 @@ if (preprocess) {
 natl <- read_rds(preprocessed_fname)
 ```
 
-# Prepare Data
+# Prepare and Explore Data 
+
+The following variables will be considered in our analysis. Since the original
+natality dataset contains multiple codings for the same variables, here we
+select a single coding per variable of interest. Some other variables have been
+dropped as well, and ?/? of original data covariates are listed. 
+
+```{r}
+# variables (with most specific coding) available for analysis
+natl_names <- list(
+  general = c("restatus",   # Resident Status
+              "pldel",      # Place or Facility of Birth
+              "birattnd"),  # Attendant at Birth
+  occur =   c("stnatexp",   # Expanded State of Occurrence
+              "cntocpop"),  # Population Size of County of Occurrence
+  resid =   c("stresexp",   # Expanded State of Residence
+              "cntrspop",   # Population Size of County of Residence
+              "citrspop",   # Population Size of City of Residence
+              "metrores",   # Metropolitan - Non-metropolitan County of Residence
+              "cntrspop"),  # Population Size of County of Residence
+  mother =  c("dmage",      # Age of Mother
+              "ormoth",     # Hispanic Origin of Mother
+              "mrace",      # Race of Mother
+              "dmeduc",     # Education of Mother
+              "dmar",       # Marital status
+              "mplbir",     # Place of Birth of Mother
+              "adequacy",   # Adequacy Of Care Recode (Kessner Index)
+              "nlbnl",      # Number of Live Births Now Living
+              "nlbnd",      # Number of Live Births Now Dead
+              "noterm",     # Number of Other Terminations
+              "dlivord",    # Detail Live Birth Order (nlbnl + nlbnd + 1)
+              "monpre",     # Detail Month of Pregnancy Prenatal Care Began
+              "nprevis"),   # Total Number of Prenatal Visits
+  father =  c("dfage",      # Age of Father
+              "orfath",     # Hispanic Origin of Father
+              "frace"),     # Race of Father
+  child =   c("dgestat",    # Gestation - Detail in Weeks
+              "csex",       # Sex
+              "dbirwt",     # Birth Weight - Detail in Grams
+              "dplural",    # Plurality
+              "fmaps",      # Five Minute Apgar Score
+              "delmeth5"),  # Method of Delivery Recode
+  med_rsk = c("anemia", "cardiac", "lung", "diabetes", "herpes", "hydra", "hemo",
+              "chyper", "phyper", "eclamp", "incervix", "pre4000", "preterm",
+              "renal", "rh", "uterine", "othermr"),
+  oth_rsk = c("tobacco",    # Tobacco Use During Pregnancy
+              "cigar",      # Average Number of Cigarettes Per Day
+              "alcohol",    # Alcohol Use During Pregnancy
+              "drink",      # Average Number of Drinks Per Week
+              "wtgain"),    # Weight Gain
+  obstetr = c("amnio", "monitor", "induct", "stimula", "tocol", "ultras", "otherob"),
+  lab_cmp = c("febrile", "meconium", "rupture", "abruptio", "preplace", "excebld",
+              "seizure", "precip", "prolong", "dysfunc", "breech", "cephalo",
+              "cord", "anesthe", "distress", "otherlb"),
+  newborn = c("nanemia", "injury", "alcosyn", "hyaline", "meconsyn", "venl30",
+              "ven30m", "nseiz", "otherab"),
+  congntl = c("anen", "spina", "hydro", "microce", "nervous", "heart", "circul",
+              "rectal", "tracheo", "omphalo", "gastro", "genital", "renalage", 
+              "urogen", "cleftlp", "adactyly", "clubfoot", "hernia", "musculo"))
+
+natl <- natl %>%
+  select(all_of(as.vector(unlist(natl_names))))
+```
 
 As a sanity check for our preprocessing and to start exploring the data, we
 tabulate some quick summary information.
@@ -93,59 +149,103 @@ The top 4 missing attributes are mplbir (mother's place of birth), fmaps (five
 minute apgar score), cntocpop (population size of county of occurrence), and
 wtgain (weight gain).
 
-Next we define our analysis in terms of covariate, treatment, and outcome
-variable names.
+Note that missing values in this dataset can be due to a variety of factors. A
+large proportion of missingness is explained by regional variations in reporting,
+leading to the highly structured correlation of missing values.
 
 ```{r}
-# variables (with most specific coding) available for analysis
-natl_names <- list(
-  general = c("restatus",  # residence status
-              "pldel",     # place or facility of birth
-              "birattnd",  # attendant at birth
-              "stnatexp",  # state + NYC
-              "citrspop",  # population size of city of residence 
-              "metrores",  # non-metro county of residence
-              "cntrspop"), # population size of county of residence
-  mother = c("dmage",      # age
-             "ormoth",     # Hispanic origin
-             "mrace",      # race
-             "dmeduc",     # education
-             "dmar",       # marriage status
-             "mplbir",     # place of birth
-             "adequacy",   # adequacy of care
-             "nlbnl",      # number of live births still living
-             "nlbnd",      # "                     now dead
-             "noterm",     # number of other terminations
-             "dlivord",    # nlbnl + nlbnd + 1
-             "monpre",     # months of prenatal care (modified coding)
-             "nprevis"),   # number of prenatal visits
-  father = c("dfage",      # age
-             "orfath",     # Hispanic origin
-             "frace"),     # race
-  child = c("dgestat",     # gestation in weeks
-             "csex",       # sex
-             "dbirwt",     # birth weight in grams
-             "dplural",    # plurality
-             "fmaps",      # five minute apgar
-             "delmeth5"),  # method of delivery
-  med_risk = c("anemia", "cardiac", "lung", "diabetes", "herpes", "hydra", "hemo",
-               "chyper", "phyper", "eclamp", "incervix", "pre4000", "preterm",
-               "renal", "rh", "uterine", "othermr"),
-  oth_risk = c("tobacco",  # tobacco use
-               "cigar",    # avg. number of cigarettes / day
-               "alcohol",  # alcohol use
-               "drink",    # avg. number of drinks / week
-               "wtgain"),  # weight gain
-  obstetrc = c("amnio", "monitor", "induct", "stimula", "tocol", "ultras", "otherob"),
-  lab_comp = c("febrile", "meconium", "rupture", "abruptio", "preplace", "excebld",
-               "seizure", "precip", "prolong", "dysfunc", "breech", "cephalo",
-               "cord", "anesthe", "distress", "otherlb"),
-  newborn = c("nanemia", "injury", "alcosyn", "hyaline", "meconsyn", "venl30",
-              "ven30m", "nseiz", "otherab"),
-  congntl = c("anen", "spina", "hydro", "microce", "nervous", "heart", "circul",
-              "rectal", "tracheo", "omphalo", "gastro", "genital", "renalage", 
-              "urogen", "cleftlp", "adactyly", "clubfoot", "hernia", "musculo"))
+M <- natl %>%
+  sample_n(1000) %>%
+  summarise(across(.fns = is.na)) %>%
+  remove_constant() %>%
+  cor()
+
+corrplot(M, method="circle", order="hclust", tl.pos = "n")
 ```
+
+# Factor representation
+
+Our models will require exclusively numeric-valued inputs, and we therefore need
+to encode group-valued variables as numeric. First we split the data into 
+variables that can be directly converted to numbers (i.e.numeric values, ordered
+factors, and binary factors) from those that require group encoding.
+
+```{r}
+natl_num <- natl %>% 
+  select_if(function (col) {
+    is.numeric(col) || 
+    (is.factor(col) && is.ordered(col)) ||
+    (is.factor(col) && (nlevels(col) == 2))
+  }) %>%
+  transmute(across(everything(), as.numeric))
+
+natl_grp <- natl %>%
+  select(-one_of(names(natl_num)))
+
+ncol(natl_num)
+ncol(natl_grp)
+```
+
+One way to encode group membership is using one-hot encodings.
+
+```{r}
+natl_grp_onehot <- 
+  model.matrix(~., model.frame(~., natl_grp, na.action=na.pass))[,-1] %>% 
+  as_tibble()
+
+ncol(natl_grp_onehot)
+```
+
+Note that this massively expands the number of variables since some of our
+group variables have many levels (i.e. 50+ geographic regions). 
+
+```{r}
+natl_grp_nlevels <- sapply(natl_grp, nlevels)
+natl_grp_nlevels
+```
+
+Most of the one-hot dimensions come from `stnatexp`, `stresexp`, and `mplbir`,
+all of which are geographic variables. The race variables `mrace` and `frace`
+also contribute many group levels / dimensions. For these variables specifically,
+it would be helpful to use alternate encodings.
+
+One alternate class of encoding schemes, sufficient representations, are 
+described in (TODO cite). We define different encoding types for the group
+variables based on their level counts.
+
+```{r}
+natl_grp_encoding_types <- natl_grp_nlevels %>%
+  map(function(size) {
+    if (size < 10) "one_hot" else "sparse_low_rank"
+  })
+```
+
+We then generate encoders of these types.
+
+```{r}
+source("make_encoder.R")
+
+natl_grp_encoders <- map2(natl_grp_encoding_types, natl_grp,
+  function(encoding, G) {
+    make_encoder(encoding, X = as.matrix(natl_num), G = G, num_components = 3)
+  })
+```
+
+And generate the corresponding encodings.
+
+```{r}
+natl_grp_encodings <- map2(natl_grp_encoders, natl_grp,
+  function(encoder, G) {
+    encoder(X = as.matrix(natl_num), G)
+  })
+```
+
+Finally, 
+
+```{r}
+onehot_encoder <- make_encoder(X = natl_num, G = G, method = "one_hot")
+```
+
 
 Now we determine which subsets of variables we would like to consider as
 potential treatments, covariates, and outcomes.
@@ -153,34 +253,8 @@ potential treatments, covariates, and outcomes.
 ```{r}
 # select data
 Xnames <- with(natl_names, c(general, mother))
-Ynames <- with(natl_names, c(child, newborn, congntl))
+Ynames <- with(natl_names, c(child, newborn, congntl, lab_comp))
 Wnames <- with(natl_names, oth_risk)
-```
-
-Some of our models require factors to be expanded into binary attributes.
-
-```{r}
-# Expand factor variables.
-Xdata_num <- natl %>% select(all_of(Xnames)) %>% select_if(is.numeric)
-Ydata_num <- natl %>% select(all_of(Ynames)) %>% select_if(is.numeric)
-Wdata_num <- natl %>% select(all_of(Wnames)) %>% select_if(is.numeric)
-
-Xdata_fct <- natl %>% select(all_of(Xnames)) %>% select_if(is.factor)
-Ydata_fct <- natl %>% select(all_of(Ynames)) %>% select_if(is.factor)
-Wdata_fct <- natl %>% select(all_of(Wnames)) %>% select_if(is.factor)
-
-# expand factors
-Xdata_fct_expanded <- 
-  model.matrix(~., model.frame(~., Xdata_fct, na.action=na.pass))[,-1] %>% 
-  as_tibble()
-
-Ydata_fct_expanded <- 
-  model.matrix(~., model.frame(~., Ydata_fct, na.action=na.pass))[,-1] %>% 
-  as_tibble()
-
-Wdata_fct_expanded <- 
-  model.matrix(~., model.frame(~., Wdata_fct, na.action=na.pass))[,-1] %>% 
-  as_tibble()
 ```
 
 # Analyses
@@ -190,11 +264,11 @@ Wdata_fct_expanded <-
 First we prepare our data.
 
 ```{r}
-Yname <- "dbirwt"
-Wname <- "alcohol"
+Yname <- "excebld"
+Wname <- "tobacco"
 
-Yname_expanded <- "dbirwt"
-Wname_expanded <- "alcoholyes"
+Yname_expanded <- "excebldyes"
+Wname_expanded <- "tobaccoyes"
 
 Xname_full <- c(names(Xdata_num), names(Xdata_fct))
 Xname_full_expanded <- c(names(Xdata_num), names(Xdata_fct_expanded))
@@ -231,11 +305,7 @@ print(paste(nrow(data) / subset_size, "of data doesn't contain NAs"))
 Our treatment and outcome have the following counts:
 
 ```{r}
-data %>%
-  group_by(W) %>%
-  ggplot(aes(x = Y)) +
-  geom_histogram(alpha=0.6, position = 'identity') +
-  facet_grid(W ~ ., scales = "free")
+with(data, table(Y, W))
 ```
 
 Estimating the propensity score using logistic regression and random forest.
