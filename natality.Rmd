@@ -67,7 +67,7 @@ if (preprocess) {
   write_rds(natl, preprocessed_fname, compress = "gz")
 }
 
-natl <- read_rds(preprocessed_fname)
+natl_full <- read_rds(preprocessed_fname)
 ```
 
 # Prepare and Explore Data 
@@ -130,8 +130,15 @@ natl_names <- list(
               "rectal", "tracheo", "omphalo", "gastro", "genital", "renalage", 
               "urogen", "cleftlp", "adactyly", "clubfoot", "hernia", "musculo"))
 
-natl <- natl %>%
-  select(all_of(as.vector(unlist(natl_names))))
+# select data
+Xnames <- with(natl_names, c(general, occur, resid, mother, father))
+Yname <- "dbirwt"
+Wname <- "tobacco"
+
+# filter to data with available Y, W
+natl <- natl_full %>%
+  select(all_of(c(Yname, Wname, Xnames))) %>%
+  drop_na(all_of(c(Yname, Wname)))
 ```
 
 As a sanity check for our preprocessing and to start exploring the data, we
@@ -142,16 +149,16 @@ natl %>%
   summarise(across(.fns = function (x) sum(is.na(x)) / length(x))) %>%
   pivot_longer(cols = everything()) %>%
   arrange(desc(value)) %>%
-  filter(value > 0.1)
+  head(8)
 ```
 
-The top 4 missing attributes are mplbir (mother's place of birth), fmaps (five 
-minute apgar score), cntocpop (population size of county of occurrence), and
-wtgain (weight gain).
+The top 5 missing variables are mother's place of birth, population size of 
+county of occurrence, and fathers race, origin, and age. All other variables
+are missing less than in less than 5% of samples. 
 
 Note that missing values in this dataset can be due to a variety of factors. A
 large proportion of missingness is explained by regional variations in reporting,
-leading to the highly structured correlation of missing values.
+leading to the highly structured correlation of missing values. TODO rework.
 
 ```{r}
 M <- natl %>%
@@ -160,7 +167,7 @@ M <- natl %>%
   remove_constant() %>%
   cor()
 
-corrplot(M, method="circle", order="hclust", tl.pos = "n")
+corrplot(M, method="circle", order="hclust", type="lower")
 ```
 
 # Factor representation
@@ -172,12 +179,17 @@ factors, and binary factors) from those that require group encoding.
 
 ```{r}
 natl_num <- natl %>% 
-  select_if(function (col) {
-    is.numeric(col) || 
-    (is.factor(col) && is.ordered(col)) ||
-    (is.factor(col) && (nlevels(col) == 2))
-  }) %>%
+  select_if(is.numeric)
+
+natl_ord <- natl %>% 
+  select_if(function (col) (is.factor(col) && is.ordered(col))) %>%
   transmute(across(everything(), as.numeric))
+
+natl_bin <- natl %>% 
+  select_if(function (col) (is.factor(col) && nlevels(col) == 2)) %>%
+  transmute(across(everything(), function(col) col == "yes"))
+
+natl_num <- bind_cols(natl_num, natl_ord, natl_bin)
 
 natl_grp <- natl %>%
   select(-one_of(names(natl_num)))
@@ -186,18 +198,8 @@ ncol(natl_num)
 ncol(natl_grp)
 ```
 
-One way to encode group membership is using one-hot encodings.
-
-```{r}
-natl_grp_onehot <- 
-  model.matrix(~., model.frame(~., natl_grp, na.action=na.pass))[,-1] %>% 
-  as_tibble()
-
-ncol(natl_grp_onehot)
-```
-
-Note that this massively expands the number of variables since some of our
-group variables have many levels (i.e. 50+ geographic regions). 
+Note that simply using one-hot encoding would massively expands the number of 
+variables since some of our group variables have many levels (i.e. 50+ states). 
 
 ```{r}
 natl_grp_nlevels <- sapply(natl_grp, nlevels)
@@ -234,277 +236,27 @@ natl_grp_encoders <- map2(natl_grp_encoding_types, natl_grp,
 And generate the corresponding encodings.
 
 ```{r}
-natl_grp_encodings <- map2(natl_grp_encoders, natl_grp,
-  function(encoder, G) {
-    encoder(X = as.matrix(natl_num), G)
-  })
+natl_grp_encodings <- natl_grp_encoders %>%
+  map2(natl_grp, 
+       ~ as.data.frame(.x(X = as.matrix(natl_num), .y))) %>%
+  map2_dfc(names(natl_grp), 
+       ~ rename_with(.x, function (x) paste(.y, 1:length(.x), sep=".")))
 ```
 
-Finally, 
+Finally, we recombine with the numeric variables to give our data matrix.
 
 ```{r}
-onehot_encoder <- make_encoder(X = natl_num, G = G, method = "one_hot")
-```
-
-
-Now we determine which subsets of variables we would like to consider as
-potential treatments, covariates, and outcomes.
-
-```{r}
-# select data
-Xnames <- with(natl_names, c(general, mother))
-Ynames <- with(natl_names, c(child, newborn, congntl, lab_comp))
-Wnames <- with(natl_names, oth_risk)
+natl_rep <- bind_cols(natl_num, natl_grp_encodings)
+head(natl_rep)
 ```
 
 # Analyses
 
-## Ignore missing values
-
-First we prepare our data.
-
 ```{r}
-Yname <- "excebld"
-Wname <- "tobacco"
-
-Yname_expanded <- "excebldyes"
-Wname_expanded <- "tobaccoyes"
-
-Xname_full <- c(names(Xdata_num), names(Xdata_fct))
-Xname_full_expanded <- c(names(Xdata_num), names(Xdata_fct_expanded))
-
-data_full <- bind_cols(
-    Ydata_num, Ydata_fct, 
-    Wdata_num, Wdata_fct, 
-    Xdata_num, Xdata_fct) %>%
-  select(all_of(c(Yname, Wname, Xname_full))) %>%
-  rename(Y = matches(Yname), W = matches(Wname))
-
-data_full_expanded <- bind_cols(
-    Ydata_num, Ydata_fct_expanded, 
-    Wdata_num, Wdata_fct_expanded, 
-    Xdata_num, Xdata_fct_expanded
-  ) %>%
-  select(all_of(c(Yname_expanded, Wname_expanded, Xname_full_expanded))) %>%
-  rename(Y = matches(Yname_expanded), W = matches(Wname_expanded))
-
-# filter to desired data
-data <- data_full %>%
-  drop_na()
-
-data_expanded <- data_full_expanded %>%
-  drop_na() %>%
-  remove_constant(quiet = FALSE) # remove constant columns
-
-# required since data_expanded drops columns
-Xname_expanded <- intersect(Xname_full_expanded, names(data_expanded))
-
-print(paste(nrow(data) / subset_size, "of data doesn't contain NAs"))
+Xmod <- as.matrix(natl_rep %>% select(-all_of(c(Yname, Wname))))
+Ymod <- natl_rep[[Yname]]
+Wmod <- natl_rep[[Wname]]
 ```
-
-Our treatment and outcome have the following counts:
-
-```{r}
-with(data, table(Y, W))
-```
-
-Estimating the propensity score using logistic regression and random forest.
-
-```{r results='hide'}
-Xmod = as.matrix(data_expanded[,Xname_expanded])
-Ymod = data_expanded$Y
-Wmod = data_expanded$W
-```
-
-```{r}
-# Computing the propensity score by logistic regression of W on X.
-p_logistic.fit <- cv.glmnet(Xmod, Wmod, family = "binomial", relax=FALSE, trace=TRUE)
-```
-
-```{r}
-p_logistic <- predict(p_logistic.fit, newx = Xmod, type = "response")[,1]
-```
-
-We can examine the resulting coefficients (note variables are unnormalized and
-this is not a measure of variable importance).
-
-```{r}
-coefs <- coef(p_logistic.fit)
-perm <- order(abs(as.vector(coefs)), decreasing = TRUE)
-vars <- rownames(coefs)[perm]
-coefs <- coefs[perm]
-
-tibble(vars = vars, coefs = coefs) %>%
-  head(10)
-```
-
-```{r}
-plot(p_logistic.fit)
-```
-
-```{r message=FALSE}
-cal_plot(Wmod, p_logistic, "Propensity Score Calibration, Logistic", bins = 10, lim = c(0,0.1))
-```
-We can also use a forest to model the propensity score.
-
-```{r}
-# Computing the propensity score by logistic regression of W on X.
-#p_forest.fit <- regression_forest(Xmod, Wmod, num.trees = 1000)
-```
-
-```{r}
-#p_forest <- predict(p_forest.fit, Xmod)$predictions
-```
-
-```{r message=FALSE}
-#cal_plot(Wmod, p_forest, "Propensity Score Calibration, RF", bins = 10, lim = c(0,1))
-```
-
-Estimating the ATE using multiple methods. First, for comparison, the raw difference
-in means estimator:
-  
-```{r}
-difference_in_means <- function(dataset, Yvar, Wvar) {
-  # Filter treatment / control observations, pulls outcome variable as a vector
-  y1 <- dataset %>% dplyr::filter(get(Wvar) == 1) %>% dplyr::pull(get(Yvar))
-  y0 <- dataset %>% dplyr::filter(get(Wvar) == 0) %>% dplyr::pull(get(Yvar))
-  
-  n1 <- sum(dataset[,Wvar])     # Number of obs in treatment
-  n0 <- sum(1 - dataset[,Wvar]) # Number of obs in control
-  
-  # Difference in means is ATE
-  tauhat <- mean(y1) - mean(y0)
-  
-  # 95% Confidence intervals
-  se_hat <- sqrt( var(y0)/(n0-1) + var(y1)/(n1-1) )
-  lower_ci <- tauhat - 1.96 * se_hat
-  upper_ci <- tauhat + 1.96 * se_hat
-  
-  return(c(ATE = tauhat, lower_ci = lower_ci, upper_ci = upper_ci))
-}
-
-tauhat_difference_in_means <- difference_in_means(data_expanded, "Y", "W")
-
-tauhat_difference_in_means
-```
-
-Regression adjustment.
-
-```{r}
-ate_condmean_ols <- function(dataset, Yvar, Wvar) {
-  df_mod_centered <- data.frame(scale(dataset, center = TRUE, scale = FALSE))
-  
-  lm.interact <- lm(as.formula(paste(Yvar, "~ . * ", Wvar)),
-                   data = df_mod_centered)
-  tau.hat <- as.numeric(coef(lm.interact)[Wvar])
-  se.hat <- as.numeric(sqrt(vcovHC(lm.interact)[Wvar, Wvar]))
-  
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
-}
-
-tauhat_ols <- ate_condmean_ols(data_expanded, "Y", "W")
-print(tauhat_ols)
-```
-
-IPW
-
-```{r}
-ipw <- function(dataset, Yvar, Wvar, p) {
-  W <- dataset[[Wvar]]
-  Y <- dataset[[Yvar]]
-  G <- ((W - p) * Y) / (p * (1 - p))
-  tau.hat <- mean(G)
-  se.hat <- sqrt(var(G) / (length(G) - 1))
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
-}
-
-tauhat_logistic_ipw <- ipw(data_expanded, "Y", "W", p_logistic)
-print(tauhat_logistic_ipw)
-```
-
-Propensity-weighted OLS.
-
-```{r}
-prop_score_ols <- function(dataset, Yvar, Wvar, p) {
-  W <- dataset[[Wvar]]
-  Y <- dataset[[Yvar]]
-  # Computing weights
-  weights <- (W / p) + ((1 - W) / (1 - p))
-  # OLS
-  lm.fit <- lm(Y ~ W, data = dataset, weights = weights)
-  tau.hat = as.numeric(coef(lm.fit)["W"])
-  se.hat = as.numeric(sqrt(vcovHC(lm.fit)["W", "W"]))
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
-}
-
-tauhat_pscore_ols <- prop_score_ols(data_expanded, "Y", "W", p_logistic)
-print(tauhat_pscore_ols)
-```
-
-AIPW
-
-```{r}
-aipw_ols <- function(dataset, Yvar, Wvar, p) {
-  ols.fit <-  lm(as.formula(paste(Yvar, "~ . * ", Wvar)), data = dataset)
-  
-  dataset.treatall <- dataset
-  dataset.treatall <- dataset.treatall %>%
-    mutate(!!Wvar := 1)
-  treated_pred = predict(ols.fit, dataset.treatall)
-  
-  dataset.treatnone = dataset
-  dataset.treatall <- dataset.treatnone %>%
-    mutate(!!Wvar := 0)
-  control_pred = predict(ols.fit, dataset.treatnone)
-  
-  actual_pred = predict(ols.fit, dataset)
-  
-  G <- treated_pred - control_pred +
-    ((dataset[[Wvar]] - p) * (dataset[[Yvar]] - actual_pred)) / (p * (1 - p))
-  tau.hat <- mean(G)
-  se.hat <- sqrt(var(G) / (length(G) - 1))
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
-}
-
-tauhat_lin_logistic_aipw <- aipw_ols(data_expanded, "Y", "W", p_logistic)
-print(tauhat_lin_logistic_aipw)
-```
-
-## Missing covariates
-
-```{r}
-data <- data_full %>%
-  drop_na(Y, W)
-
-data_expanded <- data_full_expanded %>%
-  drop_na(Y, W) %>%
-  remove_constant(quiet = FALSE) # remove constant columns
-
-# required since data_expanded drops columns
-Xname_expanded <- intersect(Xname_full_expanded, names(data_expanded))
-
-print(paste(nrow(data_expanded) / subset_size, "of data doesn't contain NAs"))
-
-# subsample for speed
-data_expanded <- data_expanded %>%
-  sample_n(as.integer(1e5))
-```
-
-```{r results='hide'}
-Xmod = as.matrix(data_expanded[,Xname_expanded])
-Ymod = data_expanded$Y
-Wmod = data_expanded$W
-
-na_fracs <- colMeans(is.na(data))
-perm <- order(abs(as.vector(na_fracs)), decreasing = TRUE)
-vars <- names(na_fracs)[perm]
-na_fracs <- na_fracs[perm]
-
-tibble(vars = vars, na_fracs = na_fracs) %>%
-  head(5)
-```
-
-Causal forest.
 
 ```{r}
 tau.forest <- causal_forest(Xmod, Ymod, Wmod)
