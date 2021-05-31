@@ -19,8 +19,8 @@ library(glmnet)    # lasso
 library(grf)       # random forests
 library(janitor)   # remove_constant columns
 library(corrplot)  # plot correlation matrix
-#library(sufrep)    # sufficient representations
-source("make_encoder.R")
+#library(sufrep)   # sufficient representations
+source("make_encoder.R") # modified sufficient representations
 
 rm(list = ls())    # reset environment
 source("utils.R")  # import helpers
@@ -132,13 +132,18 @@ natl_names <- list(
 
 # select data
 Xnames <- with(natl_names, c(general, occur, resid, mother, father))
-Yname <- "dbirwt"
-Wname <- "tobacco"
+Xnames <- c(Xnames, "drink", "wtgain")
+Xnames <- setdiff(Xnames, c("pldel", "birattnd"))
 
-# filter to data with available Y, W
+Yname <- "dbirwt"
+Wname_bin <- "tobacco"
+Wname_cnt <- "cigar"
+
+# filter data
 natl <- natl_full %>%
-  select(all_of(c(Yname, Wname, Xnames))) %>%
-  drop_na(all_of(c(Yname, Wname)))
+  filter(pldel == 1 && birattnd == 1) %>% # hospital birth with doctor attending
+  select(all_of(c(Yname, Wname_bin, Wname_cnt, Xnames))) %>% # select columns
+  drop_na(all_of(c(Yname, Wname_bin, Wname_cnt))) # Y, W are not NA
 ```
 
 As a sanity check for our preprocessing and to start exploring the data, we
@@ -229,7 +234,10 @@ source("make_encoder.R")
 
 natl_grp_encoders <- map2(natl_grp_encoding_types, natl_grp,
   function(encoding, G) {
-    make_encoder(encoding, X = as.matrix(natl_num), G = G, num_components = 3)
+    make_encoder(encoding,
+                 X = as.matrix(select(natl_num,
+                               -all_of(c(Yname, Wname_bin, Wname_cnt)))), 
+                 G = G, num_components = 5)
   })
 ```
 
@@ -253,18 +261,27 @@ head(natl_rep)
 # Analyses
 
 ```{r}
-Xmod <- as.matrix(natl_rep %>% select(-all_of(c(Yname, Wname))))
+Xmod <- as.matrix(natl_rep %>% select(-all_of(c(Yname, Wname_bin, Wname_cnt))))
 Ymod <- natl_rep[[Yname]]
-Wmod <- natl_rep[[Wname]]
+Wmod_bin <- natl_rep[[Wname_bin]]
+Wmod_cnt <- natl_rep[[Wname_cnt]]
+```
+
+Train causal forests for binary and continuous treatments.
+
+```{r}
+tau_bin.forest <- causal_forest(Xmod, Ymod, Wmod_bin)
 ```
 
 ```{r}
-tau.forest <- causal_forest(Xmod, Ymod, Wmod)
+tau_cnt.forest <- causal_forest(Xmod, Ymod, Wmod_cnt)
 ```
+
+## ATE
 
 ```{r}
 average_treatment_effect(
-  tau.forest,
+  tau_bin.forest,
   target.sample = "all",
   method = "AIPW",
   subset = NULL
@@ -273,7 +290,7 @@ average_treatment_effect(
 
 ```{r}
 average_treatment_effect(
-  tau.forest,
+  tau_bin.forest,
   target.sample = "treated",
   method = "AIPW",
   subset = NULL
@@ -281,12 +298,23 @@ average_treatment_effect(
 ```
 
 ```{r}
-tau.hat <- predict(tau.forest)$predictions
-hist(tau.hat)
+average_partial_effect(tau_cnt.forest)
 ```
 
 ```{r}
-importance <- variable_importance(tau.forest)
+tau_bin.hat <- predict(tau_bin.forest)$predictions
+hist(tau_bin.hat)
+```
+```{r}
+tau_cnt.hat <- predict(tau_cnt.forest)$predictions
+hist(tau_cnt.hat)
+```
+```{r}
+test_calibration(tau_bin.forest)
+```
+
+```{r}
+importance <- variable_importance(tau_bin.forest)
 perm <- order(as.vector(importance), decreasing = TRUE)
 vars <- colnames(Xmod)[perm]
 importance <- importance[perm]
@@ -294,3 +322,9 @@ importance <- importance[perm]
 tibble(vars = vars, importance = importance) %>%
   head(10)
 ```
+
+```{r}
+tau_bin.blp <- best_linear_projection(tau_bin.forest, Xmod)
+tau_bin.blp
+```
+
