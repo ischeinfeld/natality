@@ -215,7 +215,8 @@ natl_num <- natl %>%
 # ordered factors
 natl_ord <- natl %>% 
   select_if(function (col) (is.factor(col) && is.ordered(col))) %>%
-  transmute(across(everything(), as.numeric))
+  # preserve numeric coding of factor levels instead of level index
+  transmute(across(everything(), ~ as.numeric(as.character(.))))
 
 # binary factors
 natl_bin <- natl %>% 

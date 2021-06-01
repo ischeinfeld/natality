@@ -1,0 +1,212 @@
+---
+title: 'US Natality Data: Causal Inference Case Study'
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r echo=TRUE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, comment=NA)
+
+library(ggplot2)   # plot
+library(dplyr)     # tables
+library(readr)     # reading
+library(stringr)   # strings
+library(purrr)     # fp
+library(tidyr)     # remove_na
+library(forcats)   # factor recode
+library(glmnet)    # lasso
+library(grf)       # random forests
+library(janitor)   # remove_constant columns
+library(corrplot)  # plot correlation matrix
+#library(sufrep)   # sufficient representations
+source("make_encoder.R") # modified sufficient representations
+
+rm(list = ls())    # reset environment
+source("utils.R")  # import helpers
+
+# The seed is set before every randomized operation throughout so results
+# are consistent when rerunning cells.
+```
+
+# Load data and models
+
+```{r}
+# In theory variable, currently only 2002 preprocessing implemented
+year <- 2002 
+
+# Select outcome and binary/continuous treatments
+# Code supports either tobacco/cigar or alcohol/drink treatments
+Yname <- "dbirwt"      # outcome
+Wname_bin <- "tobacco" # binary treatment
+Wname_cnt <- "cigar"   # continuous treatment
+```
+
+Load full preprocessed natality data.
+
+```{r}
+preprocessed_fname <- paste0("../data/preprocessed_rds/natl", year, ".rds")
+natl_full <- read_rds(preprocessed_fname)
+```
+
+The following variables will be considered in our analysis. Since the original
+natality dataset contains multiple codings for the same variables, here we
+select a single coding per variable of interest. Some other variables have been
+dropped as well, and ?/? of original data covariates are listed. 
+
+```{r}
+# load model data
+natl_fname <- paste0("../models/natl/natl", year, Wname_bin, "-", Wname_cnt, ".rds")
+natl <- read_rds(natl_fname)
+```
+
+Our models will require exclusively numeric-valued inputs, and we therefore need
+to encode group-valued variables as numeric. First we split the data into 
+variables that can be directly converted to numbers (i.e.numeric values, ordered
+factors, and binary factors) from those that require group encoding.
+
+```{r}
+# save model data
+natl_rep_fname <- paste0("../models/natl_rep/natl", year, Wname_bin, "-", Wname_cnt, ".rds")
+natl_rep <- read_rds(natl_rep_fname)
+```
+
+Load trained models for binary and continuous treatments.
+
+```{r}
+Xmod <- as.matrix(natl_rep %>% select(-all_of(c(Yname, Wname_bin, Wname_cnt))))
+Ymod <- natl_rep[[Yname]]
+Wmod_bin <- natl_rep[[Wname_bin]]
+Wmod_cnt <- natl_rep[[Wname_cnt]]
+
+train_fname <- paste0("../models/causal_forests/natl", year, Wname_bin, ".rds")
+tau_bin.forest <- read_rds(train_fname)
+
+train_fname <- paste0("../models/causal_forests/natl", year, Wname_cnt, ".rds")
+tau_cnt.forest <- read_rds(train_fname)
+```
+
+# Analysis and Interpretation
+
+## Binary Treatment
+
+### Averate Treatment Effects
+
+```{r}
+average_treatment_effect(tau_bin.forest)
+```
+
+```{r}
+average_treatment_effect(tau_bin.forest, target.sample = "treated")
+```
+
+```{r}
+importance <- variable_importance(tau_bin.forest)
+perm <- order(as.vector(importance), decreasing = TRUE)
+vars <- colnames(Xmod)[perm]
+importance <- importance[perm]
+
+tibble(vars = vars, importance = importance) %>%
+  head(10)
+```
+### Treatment Effect Heterogeneity 
+
+The calibration test indicates we are picking up meaningful heterogeneity.
+
+```{r}
+test_calibration(tau_bin.forest)
+```
+
+Plotting the predicted values, the distribution is solidly on the negative side
+which is what would be expected from the medical literature. (TODO check know
+effect magnitude and heterogeneity).
+
+```{r}
+tau_bin.blp.coefs <- as.list(colnames(Xmod)) %>%
+  # calculate best linear projections onto single variables
+  map(~ best_linear_projection(tau_bin.forest, 
+                               A = Xmod[,.x]))
+
+names(tau_bin.blp.coefs) <- colnames(Xmod)
+tau_bin.blp <- tau_bin.blp.coefs %>%
+  # filter constant vars w no coefficient
+  keep(~ dim(.x)[1] == 2) %>%
+  # extract into tibble rows
+  imap_dfr(~ tibble(var = .y,
+                    est = .x["A1", "Estimate"],
+                    std = .x["A1", "Std. Error"],
+                    tst = .x["A1", "t value"],
+                    prb = .x["A1", "Pr(>|t|)"]))
+tau_bin.blp %>%
+  arrange(desc(prb))
+```
+
+As we are interested in interpreting these linear projections, we restrict to
+variables which were originally ordered types (i.e. ignoring group 
+representations).
+
+```{r}
+tau_bin.blp.ord <- tau_bin.blp %>%
+  filter(!str_detect(var, "\\.")) %>%
+  arrange(desc(prb))
+tau_bin.blp.ord
+```
+
+The two variables with the most significant associations with heterogeneity
+in the treatment effect are `citrspop` (Population Size of City of Residence)
+and `dmeduc`, (Education of Mother).
+
+#### Population Size of City of Residence
+
+Since this variable is a 5 level factor, we split by level.
+
+```{r}
+citrspop <- Xmod[,"citrspop"] %>% 
+  table() %>%
+  as_tibble() %>%
+  rename(code = ".") %>%
+  mutate(code = as.integer(code)) %>%
+  mutate(value = case_when(
+    code == 0 ~ "> 1M",
+    code == 1 ~ "[500K, 1M]",
+    code == 2 ~ "[250K, 500K]",
+    code == 3 ~ "[100K, 250K]",
+    code == 9 ~ "< 100K"
+  ), .after = code)
+```
+
+```{r}
+as.list(citrspop$code) %>%
+  map_dfr(~ average_treatment_effect(tau_bin.forest, 
+                                 target.sample = "treated",
+                                 subset = Xmod[,"citrspop"] == .x)) %>%
+  mutate(value = citrspop$value, 
+         .before = estimate) %>%
+  inner_join(citrspop, by = "value") %>%
+  select(code, value, n, estimate, std.err)
+```
+
+#### Education of Mother
+
+Since this data is integer valued, we split into quantiles.
+
+```{r}
+quantiles <- 5
+probs <- (0:quantiles) / quantiles
+
+dmeduc <- tibble(value = Xmod[,"dmeduc"]) %>% 
+  mutate(qtl = cut(value, quantile(value, probs = probs, na.rm = TRUE), include.lowest = TRUE))
+
+dmeduc.table <- dmeduc$qtl %>% table() %>% as_tibble() %>% rename(value = ".")
+```
+
+```{r}
+as.list(levels(dmeduc$qtl)) %>%
+  map_dfr(~ average_treatment_effect(tau_bin.forest, 
+                                 target.sample = "treated",
+                                 subset = dmeduc$qtl == .x)) %>%
+  mutate(value = levels(dmeduc$qtl), 
+         .before = estimate)  %>%
+  inner_join(dmeduc.table, by = "value") %>%
+  select(value, n, estimate, std.err)
+```
