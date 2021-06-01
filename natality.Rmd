@@ -24,33 +24,53 @@ source("make_encoder.R") # modified sufficient representations
 
 rm(list = ls())    # reset environment
 source("utils.R")  # import helpers
+
+# The seed is set before every randomized operation throughout so results
+# are consistent when rerunning cells.
 ```
 
 # Subset and preprocess data
 
 ```{r}
-year <- 2002
+# In theory variable, currently only 2002 preprocessing implemented
+year <- 2002 
+
+# Select outcome and binary/continuous treatments
+# Code supports either tobacco/cigar or alcohol/drink treatments
+Yname <- "dbirwt"      # outcome
+Wname_bin <- "tobacco" # binary treatment
+Wname_cnt <- "cigar"   # continuous treatment
+
+# Beginning data size 100,000
+data_size <- as.integer(1e5)
 ```
 
-To begin with we sample 500,000 birth records uniformly at random and preprocess
+To begin with we sample 100,000 birth records uniformly at random and preprocess
 their columns types from the raw CSV to encode each variable as an integer or 
 an ordered or unordered factor. All values coded as missing or undetermined
 are considered NA.
 
 ```{r}
 subset <- FALSE
-subset_size <- as.integer(1e5)
+
 subset_fname <- paste0("../data/subset_rds/natl", year, ".rds")
 
 if (subset) {
   raw_fname <- paste0("../data/raw_csv/natl", year, ".csv")
+  set.seed(50)
+  # select a random sample
   natl_raw <- 
     read_csv(raw_fname, col_types = cols(.default = col_character())) %>%
-    sample_n(subset_size)
+    sample_n(data_size)
 
   write_rds(natl_raw, subset_fname, compress = "gz")
 }
 ```
+
+Convert text csv to factors using preprocessing code from `preprocess_natl2002.R`.
+This mostly just fixes the factor levels to match those described in the data 
+[documentation](https://data.nber.org/natality/2002/natl2002.pdf). It does make
+some changes to the coding as noted at the top of the preprocessing code. 
 
 ```{r}
 preprocess <- FALSE
@@ -58,9 +78,8 @@ preprocess <- FALSE
 preprocessed_fname <- paste0("../data/preprocessed_rds/natl", year, ".rds")
 
 if (preprocess) {
-  # load preprocess_natl for this year
   source(paste0("preprocess/preprocess_natl", year, ".R"))
-  
+  # preprocess natl, fix types / levels and modify variables (monpre, dmar)
   natl <- read_rds(subset_fname) %>%
     preprocess_natl()
   
@@ -70,7 +89,7 @@ if (preprocess) {
 natl_full <- read_rds(preprocessed_fname)
 ```
 
-# Prepare and Explore Data 
+# Prepare Data
 
 The following variables will be considered in our analysis. Since the original
 natality dataset contains multiple codings for the same variables, here we
@@ -94,14 +113,14 @@ natl_names <- list(
               "ormoth",     # Hispanic Origin of Mother
               "mrace",      # Race of Mother
               "dmeduc",     # Education of Mother
-              "dmar",       # Marital status
+              "dmar",       # Marital status MODIFIED
               "mplbir",     # Place of Birth of Mother
               "adequacy",   # Adequacy Of Care Recode (Kessner Index)
               "nlbnl",      # Number of Live Births Now Living
               "nlbnd",      # Number of Live Births Now Dead
               "noterm",     # Number of Other Terminations
               "dlivord",    # Detail Live Birth Order (nlbnl + nlbnd + 1)
-              "monpre",     # Detail Month of Pregnancy Prenatal Care Began
+              "monpre",     # Detail Month of Pregnancy Prenatal Care Began MODIFIED
               "nprevis"),   # Total Number of Prenatal Visits
   father =  c("dfage",      # Age of Father
               "orfath",     # Hispanic Origin of Father
@@ -115,6 +134,7 @@ natl_names <- list(
   med_rsk = c("anemia", "cardiac", "lung", "diabetes", "herpes", "hydra", "hemo",
               "chyper", "phyper", "eclamp", "incervix", "pre4000", "preterm",
               "renal", "rh", "uterine", "othermr"),
+  # currently code supports W either tobacco/cigar or alcohol/drink
   oth_rsk = c("tobacco",    # Tobacco Use During Pregnancy
               "cigar",      # Average Number of Cigarettes Per Day
               "alcohol",    # Alcohol Use During Pregnancy
@@ -130,20 +150,21 @@ natl_names <- list(
               "rectal", "tracheo", "omphalo", "gastro", "genital", "renalage", 
               "urogen", "cleftlp", "adactyly", "clubfoot", "hernia", "musculo"))
 
-# select data
+# Select covariates
 Xnames <- with(natl_names, c(general, occur, resid, mother, father))
-Xnames <- c(Xnames, "drink", "wtgain")
-Xnames <- setdiff(Xnames, c("pldel", "birattnd"))
-
-Yname <- "dbirwt"
-Wname_bin <- "tobacco"
-Wname_cnt <- "cigar"
+Xnames <- c(Xnames, # add risk factors besides those considered treatments
+            setdiff(natl_names$oth_rsk, c(Wname_bin, Wname_cnt)))
+Xnames <- setdiff(Xnames, c("pldel", "birattnd")) # remove filter variables
 
 # filter data
 natl <- natl_full %>%
   filter(pldel == 1 && birattnd == 1) %>% # hospital birth with doctor attending
   select(all_of(c(Yname, Wname_bin, Wname_cnt, Xnames))) %>% # select columns
   drop_na(all_of(c(Yname, Wname_bin, Wname_cnt))) # Y, W are not NA
+
+# save model data
+natl_fname <- paste0("../models/natl/natl", year, Wname_bin, "-", Wname_cnt, ".rds")
+write_rds(natl, natl_fname, compress = "gz")
 ```
 
 As a sanity check for our preprocessing and to start exploring the data, we
@@ -154,6 +175,7 @@ natl %>%
   summarise(across(.fns = function (x) sum(is.na(x)) / length(x))) %>%
   pivot_longer(cols = everything()) %>%
   arrange(desc(value)) %>%
+  rename(fracNA = value) %>%
   head(8)
 ```
 
@@ -163,19 +185,22 @@ are missing less than in less than 5% of samples.
 
 Note that missing values in this dataset can be due to a variety of factors. A
 large proportion of missingness is explained by regional variations in reporting,
-leading to the highly structured correlation of missing values. TODO rework.
+leading to some very high correlations between variables, while some weaker 
+correlations may be due to other various causes.
 
 ```{r}
+set.seed(186)
 M <- natl %>%
   sample_n(1000) %>%
   summarise(across(.fns = is.na)) %>%
   remove_constant() %>%
   cor()
 
-corrplot(M, method="circle", order="hclust", type="lower")
+# plot NA fraction correlations
+corrplot(M, method="circle", order="hclust", tl.col = "black")
 ```
 
-# Factor representation
+# Factor Representation / Group Encoding
 
 Our models will require exclusively numeric-valued inputs, and we therefore need
 to encode group-valued variables as numeric. First we split the data into 
@@ -183,19 +208,24 @@ variables that can be directly converted to numbers (i.e.numeric values, ordered
 factors, and binary factors) from those that require group encoding.
 
 ```{r}
+# numeric values
 natl_num <- natl %>% 
   select_if(is.numeric)
 
+# ordered factors
 natl_ord <- natl %>% 
   select_if(function (col) (is.factor(col) && is.ordered(col))) %>%
   transmute(across(everything(), as.numeric))
 
+# binary factors
 natl_bin <- natl %>% 
   select_if(function (col) (is.factor(col) && nlevels(col) == 2)) %>%
   transmute(across(everything(), function(col) col == "yes"))
 
+# combine ordered types
 natl_num <- bind_cols(natl_num, natl_ord, natl_bin)
 
+# unordered factors that need encoding
 natl_grp <- natl %>%
   select(-one_of(names(natl_num)))
 
@@ -222,14 +252,19 @@ variables based on their level counts.
 
 ```{r}
 natl_grp_encoding_types <- natl_grp_nlevels %>%
-  map(function(size) {
-    if (size < 10) "one_hot" else "sparse_low_rank"
+  map(function(nlevels) {
+    # use sparse low rank where one-hot would be "too" high dimensional
+    if (nlevels < 10) "one_hot" else "sparse_low_rank"
   })
 ```
 
-We then generate encoders of these types.
+We then generate encoders of these types. Note that our modification of the
+`sufrep` code currently makes an encoding of the NAs in the factor as a separate 
+level. An alternate approach would be to leave NA values NA in all their 
+dimensions.
 
 ```{r}
+# Make sure we have our modified make_encoder that works with NA values. 
 source("make_encoder.R")
 
 natl_grp_encoders <- map2(natl_grp_encoding_types, natl_grp,
@@ -241,24 +276,30 @@ natl_grp_encoders <- map2(natl_grp_encoding_types, natl_grp,
   })
 ```
 
-And generate the corresponding encodings.
+Generate the corresponding encodings on our data.
 
 ```{r}
 natl_grp_encodings <- natl_grp_encoders %>%
-  map2(natl_grp, 
-       ~ as.data.frame(.x(X = as.matrix(natl_num), .y))) %>%
-  map2_dfc(names(natl_grp), 
+  map2(natl_grp, # apply encoder function .x
+       ~ as.data.frame(.x(X = as.matrix(natl_num), G = .y))) %>%
+  map2_dfc(names(natl_grp), # rename columns "varname.dim"
        ~ rename_with(.x, function (x) paste(.y, 1:length(.x), sep=".")))
 ```
 
-Finally, we recombine with the numeric variables to give our data matrix.
+Finally, recombine with the numeric variables to give our data matrix.
 
 ```{r}
+# combine numeric and encoded group variables
 natl_rep <- bind_cols(natl_num, natl_grp_encodings)
+
+# save model data
+natl_rep_fname <- paste0("../models/natl_rep/natl", year, Wname_bin, "-", Wname_cnt, ".rds")
+write_rds(natl_rep, natl_rep_fname, compress = "gz")
+
 head(natl_rep)
 ```
 
-# Analyses
+# Training
 
 ```{r}
 Xmod <- as.matrix(natl_rep %>% select(-all_of(c(Yname, Wname_bin, Wname_cnt))))
@@ -270,61 +311,39 @@ Wmod_cnt <- natl_rep[[Wname_cnt]]
 Train causal forests for binary and continuous treatments.
 
 ```{r}
-tau_bin.forest <- causal_forest(Xmod, Ymod, Wmod_bin)
+train <- FALSE
+train_fname <- paste0("../models/causal_forests/natl", year, Wname_bin, ".rds")
+
+if (train) {
+  tau_bin.forest <- causal_forest(Xmod, Ymod, Wmod_bin, seed=318)
+  write_rds(tau_bin.forest, train_fname)
+} else {
+  tau_bin.forest <- read_rds(train_fname)
+}
 ```
 
 ```{r}
-tau_cnt.forest <- causal_forest(Xmod, Ymod, Wmod_cnt)
+train <- FALSE
+train_fname <- paste0("../models/causal_forests/natl", year, Wname_cnt, ".rds")
+
+if (train) {
+  tau_cnt.forest <- causal_forest(Xmod, Ymod, Wmod_cnt, seed=330)
+  write_rds(tau_cnt.forest, train_fname)
+} else {
+  tau_cnt.forest <- read_rds(train_fname)
+}
 ```
 
-## ATE
+We can now use these forests in further analysis.
 
 ```{r}
-average_treatment_effect(
-  tau_bin.forest,
-  target.sample = "all",
-  method = "AIPW",
-  subset = NULL
-)
+average_treatment_effect(tau_bin.forest)
 ```
 
 ```{r}
-average_treatment_effect(
-  tau_bin.forest,
-  target.sample = "treated",
-  method = "AIPW",
-  subset = NULL
-)
+average_treatment_effect(tau_bin.forest, target.sample = "treated")
 ```
 
 ```{r}
 average_partial_effect(tau_cnt.forest)
 ```
-
-```{r}
-tau_bin.hat <- predict(tau_bin.forest)$predictions
-hist(tau_bin.hat)
-```
-```{r}
-tau_cnt.hat <- predict(tau_cnt.forest)$predictions
-hist(tau_cnt.hat)
-```
-```{r}
-test_calibration(tau_bin.forest)
-```
-
-```{r}
-importance <- variable_importance(tau_bin.forest)
-perm <- order(as.vector(importance), decreasing = TRUE)
-vars <- colnames(Xmod)[perm]
-importance <- importance[perm]
-
-tibble(vars = vars, importance = importance) %>%
-  head(10)
-```
-
-```{r}
-tau_bin.blp <- best_linear_projection(tau_bin.forest, Xmod)
-tau_bin.blp
-```
-

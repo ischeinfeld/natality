@@ -1,3 +1,11 @@
+################################################################
+# This file provides preprocessing code to load natl2002.csv.
+# Note that not all variables are read in.
+# The following variables have their levels modified:
+#   monpre - new scale is numeric, number of months of prenatal care
+#   dmar - collapsed puerto rico 2 and 3 to match US coding
+################################################################
+
 # determines formatting for factor levels padding w/ 0 as needed
 lev_unpadded <- function(ints) {
   as.character(ints)
