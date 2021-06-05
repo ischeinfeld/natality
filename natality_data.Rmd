@@ -1,0 +1,380 @@
+---
+title: 'US Natality Data: Causal Inference Case Study'
+subtitle: 'Dataset Preparation'
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r echo=TRUE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, comment=NA)
+
+library(ggplot2)   # plot
+library(dplyr)     # tables
+library(readr)     # reading
+library(stringr)   # strings
+library(purrr)     # fp
+library(tidyr)     # remove_na
+library(forcats)   # factor recode
+library(glmnet)    # lasso
+library(grf)       # random forests
+library(janitor)   # remove_constant columns
+library(corrplot)  # plot correlation matrix
+#library(sufrep)   # sufficient representations
+source("make_encoder.R") # modified sufficient representations
+
+rm(list = ls())    # reset environment
+source("utils.R")  # import helpers
+
+# The seed is set before every randomized operation throughout so results
+# are consistent when rerunning cells.
+```
+
+This notebook preprocesses data from the Vital Statistics Natality Birth Data.
+It first takes a working subset of the raw source CSV and parses the columns to 
+their correct types (binary, numeric, ordered or unordered factor). 
+
+Births are filtered to those in hospitals with a medical doctor present. A new 
+variable `smoking` is created with three levels, `none, light, heavy`. Three
+datasets are created.
+
+1. Binary treatment `smoking_light`, this dataset only contains light and non-smokers.
+1. Binary treatment `smoking_heavy`, this dataset only contains heavy and non-smokers.
+1. Continuous treatment `cigar` (number of cigarettes smoked per day).
+
+We filter all of these to a subset where our treatment and outcome variable 
+`dbirwt` (birth weight) are non-missing since they cannot be for the purposes of
+our analysis, and then sample 100,000 records for analysis.
+
+Finally, we select our covariates of interest to control for confounding and
+encode those that are unordered factors. For factors with <10 levels, we use a
+one-hot encoding. For factors with 10+ levels (three state-level geographic
+identifiers and the father's and mother's race), a 6 dimensional sparse encoding
+obtained using SPCA on the continuous covariates is used. This encoding is one
+of the forms of sufficient representation discussed in (TODO CITE sufrep).
+
+# Subset and preprocess data
+
+```{r}
+# In theory variable, currently only 2002 preprocessing implemented
+year <- 2002
+
+# Data size for analysis: 100,000
+data_size <- as.integer(1e5)
+```
+
+To begin with we sample a subset of birth records uniformly at random. We sample
+more than the desired `data_size` so that there is enough data remaining after 
+preprocessing and filtering. Sampling at this stage speeds up the following 
+steps since the full dataset is quite large (1.8GB).
+
+```{r}
+subset <- FALSE
+
+subset_fname <- paste0("data/subset_rds/natl", year, ".rds")
+
+if (subset) {
+  raw_fname <- paste0("data/raw_csv/natl", year, ".csv")
+  set.seed(50)
+  # select a random sample
+  natl_raw <- 
+    read_csv(raw_fname, col_types = cols(.default = col_character())) %>%
+    sample_n(2 * data_size) # larger sample so dropping some data leaves enough
+
+  write_rds(natl_raw, subset_fname, compress = "gz")
+}
+```
+
+Convert text csv to factors using preprocessing code from `preprocess_natl2002.R`.
+This mostly just fixes the factor levels to match those described in the data 
+[documentation](https://data.nber.org/natality/2002/natl2002.pdf). It does make
+some changes to two variables as noted at the top of the preprocessing code.
+
+```{r}
+preprocess <- FALSE
+
+preprocessed_fname <- paste0("data/preprocessed_rds/natl", year, ".rds")
+
+if (preprocess) {
+  source(paste0("preprocess/preprocess_natl", year, ".R"))
+  natl_full <- read_rds(subset_fname) %>%
+    
+    # preprocess natl, fix types / levels and modify variables (monpre, dmar)
+    preprocess_natl() %>%
+    
+    # filter to hospital birth with doctor attending
+    filter(pldel == 1 && birattnd == 1) %>%
+    
+    # add NEW variables
+    mutate(
+      smoking = case_when(
+        cigar ==  0 ~ "none",
+        cigar <  10 ~ "light",
+        cigar >= 10 ~ "heavy") %>%
+        factor(levels = c("none", "light", "heavy")),
+      smoking_heavy = smoking == "heavy",
+      smoking_light = smoking == "light")
+    
+  write_rds(natl_full, preprocessed_fname, compress = "gz")
+}
+
+natl_full <- read_rds(preprocessed_fname)
+```
+
+# Prepare Data
+
+Here we select our covariates to control for confounding. Since the original
+natality dataset contains multiple codings for the same features, here we
+select a single coding per variable of interest.
+
+```{r}
+# Select variables to consider as covariates to control for confounding
+covariates <- list(
+  general = c("restatus"),  # Resident Status
+  occur =   c("stnatexp",   # Expanded State of Occurrence
+              "cntocpop"),  # Population Size of County of Occurrence
+  resid =   c("stresexp",   # Expanded State of Residence
+              "cntrspop",   # Population Size of County of Residence
+              "citrspop",   # Population Size of City of Residence
+              "metrores",   # Metropolitan County of Residence
+              "cntrspop"),  # Population Size of County of Residence
+  mother =  c("dmage",      # Age of Mother
+              "ormoth",     # Hispanic Origin of Mother
+              "mrace",      # Race of Mother
+              "dmeduc",     # Education of Mother
+              "dmar",       # Marital status MODIFIED
+              "mplbir",     # Place of Birth of Mother
+              "adequacy",   # Adequacy Of Care Recode (Kessner Index)
+              "nlbnl",      # Number of Live Births Now Living
+              "nlbnd",      # Number of Live Births Now Dead
+              "noterm",     # Number of Other Terminations
+              "dlivord",    # Detail Live Birth Order
+              "monpre",     # Detail Month of Pregnancy Prenatal Care Began MODIFIED
+              "nprevis"),   # Total Number of Prenatal Visits
+  father =  c("dfage",      # Age of Father
+              "orfath",     # Hispanic Origin of Father
+              "frace"),     # Race of Father
+  child =   c("dgestat",    # Gestation - Detail in Weeks
+              "csex",       # Sex
+              "dplural"),   # Plurality
+  med_rsk = c("anemia",     # Anemia (Hct.<30/Hgb.<10)
+              "cardiac",    # Cardiac disease
+              "lung",       # Acute or chronic lung disease
+              "diabetes",   # Diabetes
+              "herpes",     # Genital herpes
+              "hydra",      # Hydramnios/Oligohydramnios
+              "hemo",       # Hemoglobinopathy
+              "chyper",     # Hypertension - chronic
+              "phyper",     # Hypertension - pregnancy-associated
+              "eclamp",     # Eclampsia
+              "incervix",   # Incompetent cervix
+              "pre4000",    # Previous infant 4000+ grams
+              "preterm",    # Previous preterm or small-for-gestational-age infant
+              "renal",      # Renal disease
+              "rh",         # Rh sensitization
+              "uterine",    # Uterine bleeding
+              "othermr"),   # Other Medical Risk Factors
+  oth_rsk = c("drink",      # Average Number of Drinks Per Week
+              "wtgain"))    # Weight Gain
+```
+
+Datasets are created with the following treatments.
+
+1. Binary treatment `smoking_light`, this dataset only contains light and non-smokers.
+1. Binary treatment `smoking_heavy`, this dataset only contains heavy and non-smokers.
+1. Continuous treatment `cigar` (number of cigarettes smoked per day).
+
+```{r}
+# Covariate names
+Xnames <- unlist(covariates)
+names(Xnames) <- NULL # otherwise select renames columns below
+
+# Prepare datasets
+set.seed(50)
+natl <- list()
+
+# treatment types (we replicate the encoding for each one)
+treatments <- c("smoking_light", "smoking_heavy", "cigar")
+
+natl[["smoking_light"]] <- natl_full %>%
+  filter(!smoking_heavy) %>% # remove heavy smokers
+  select(all_of(c(Xnames, "dbirwt", "smoking_light"))) %>% # select variables
+  drop_na(all_of(c("dbirwt", "smoking_light"))) %>% # Y, W are not NA
+  sample_n(data_size) # select num. of samples for analysis
+
+natl[["smoking_heavy"]] <- natl_full %>%
+  filter(!smoking_light) %>% # remove light smokers
+  select(all_of(c(Xnames, "dbirwt", "smoking_heavy"))) %>% # select variables
+  drop_na(all_of(c("dbirwt", "smoking_heavy"))) %>% # Y, W are not NA
+  sample_n(data_size) # select num. of samples for analysis
+
+natl[["cigar"]] <- natl_full %>%
+  select(all_of(c(Xnames, "dbirwt", "cigar"))) %>% # select variables
+  drop_na(all_of(c("dbirwt", "cigar"))) %>% # Y, W are not NA
+  sample_n(data_size) # select num. of samples for analysis
+
+# save model data
+for (treat in treatments) {
+  natl_fname <- paste0("models/natl/natl", year, ".", treat, ".rds")
+  write_rds(natl$smoking_light, natl_fname, compress = "gz")
+}
+```
+
+The top 7 missing variables are mother's place of birth, population size of 
+county of occurrence, fathers race, origin, and age, and the mother's vaginal
+herpes and uterine bleeding status. All other variables are missing in less than 
+6% of samples. (The continuous treatment data is shown in this example, but the
+two binary treatment datasets are similar.)
+
+```{r}
+natl$cigar %>%
+  summarise(across(.fns = function (x) sum(is.na(x)) / length(x))) %>%
+  pivot_longer(cols = everything()) %>%
+  arrange(desc(value)) %>%
+  rename(fracNA = value) %>%
+  head(10)
+```
+
+Note that missing values in this dataset can be due to a variety of factors. A
+large proportion of missingness is explained by regional variations in reporting,
+and this and other factors lead many variable pairs to have a high missingness 
+correlation.
+
+```{r}
+set.seed(245)
+M <- natl$cigar %>%
+  sample_n(1000) %>%
+  summarise(across(.fns = is.na)) %>%
+  remove_constant() %>%
+  cor()
+
+# plot NA fraction correlations
+corrplot(M, method="circle", order="hclust", tl.col = "black", tl.cex = 0.5)
+```
+
+# Factor Representation / Group Encoding
+
+Our models will require exclusively numeric-valued inputs, and we therefore need
+to encode group-valued variables as numeric. First we split the data into 
+variables that can be directly converted to numbers (i.e.numeric values, ordered
+factors, and binary factors) from those that require group encoding.
+
+```{r}
+natl_num <- list() # numeric variables
+natl_grp <- list() # group variables
+
+for (treat in treatments) {
+  # numeric and binary values
+  natl_num_bin <- natl[[treat]] %>% 
+    select_if(function (col) (is.numeric(col) || is.logical(col))) %>%
+    transmute(across(everything(), ~ as.numeric(.)))
+  
+  # ordered factors
+  natl_ord <- natl[[treat]] %>% 
+    select_if(function (col) (is.factor(col) && is.ordered(col))) %>%
+    # preserve numeric coding of factor levels instead of level index
+    transmute(across(everything(), ~ as.numeric(as.character(.))))
+  
+  # combine ordered types
+  natl_num[[treat]] <- bind_cols(natl_num_bin, natl_ord)
+  
+  # unordered factors that need encoding
+  natl_grp[[treat]] <- natl[[treat]] %>%
+    select(-one_of(names(natl_num[[treat]]))) # drop numeric cols
+}
+```
+
+Note that simply using one-hot encoding would massively expands the number of 
+variables since some of our group variables have many levels (i.e. 50+ states). 
+
+```{r}
+natl_grp_nlevels <- list()
+
+for (treat in treatments) {
+  natl_grp_nlevels[[treat]] <- sapply(natl_grp[[treat]], nlevels)
+}
+
+natl_grp_nlevels$cigar
+```
+
+Most of the one-hot dimensions come from `stnatexp`, `stresexp`, and `mplbir`,
+all of which are geographic variables. The race variables `mrace` and `frace`
+also contribute many group levels / dimensions. For these variables specifically,
+it would be helpful to use alternate encodings.
+
+One alternate class of encoding schemes, sufficient representations, are 
+described in (TODO CITE sufrep). We define different encoding types for the 
+group variables based on their level counts. For factors with <10 levels, we use a
+one-hot encoding. For factors with 10+ levels (three state-level geographic
+identifiers and the father's and mother's race), a 6 dimensional sparse encoding
+obtained using SPCA on groupwise means of the continuous covariates is used.
+
+```{r}
+natl_grp_encoding_types <- list()
+
+for (treat in treatments) {
+  natl_grp_encoding_types[[treat]] <- natl_grp_nlevels[[treat]] %>%
+    map(function(nlevels) {
+      # use sparse low rank where one-hot would be "too" high dimensional
+      if (nlevels < 10) "one_hot" else "sparse_low_rank"
+    })
+}
+```
+
+We then generate encoders of these types. Note that our modification of the
+`sufrep` code currently encodes the NAs in the factor G as a separate level. An
+alternate approach would be to leave NA values NA in all their dimensions. It
+also drops NA values in X in the means encoding to which SPCA is applied.
+
+```{r}
+# Make sure we have our modified make_encoder that works with NA covariates in X
+source("make_encoder.R")
+natl_grp_encoders <- list()
+
+for (treat in treatments) {
+  natl_grp_encoders[[treat]] <- 
+    map2(natl_grp_encoding_types[[treat]], natl_grp[[treat]],
+         function(encoding, G) {
+           make_encoder(encoding,
+                        X = as.matrix(select(natl_num[[treat]],
+                                             -all_of(c("dbirwt", treat)))), 
+                        G = G, num_components = 6)
+         })
+}
+```
+
+Generate the corresponding encodings on our data.
+
+```{r}
+natl_grp_encodings <- list()
+
+for (treat in treatments) {
+  natl_grp_encodings[[treat]] <- natl_grp_encoders[[treat]] %>%
+    map2(natl_grp[[treat]], # apply encoder function .x
+         ~ as.data.frame(
+           .x(X = as.matrix(select(natl_num[[treat]], -all_of(c("dbirwt", treat)))),
+              G = .y))) %>%
+    map2_dfc(names(natl_grp[[treat]]), # rename columns "varname.dim"
+             ~ rename_with(.x, function (x) paste(.y, 1:length(.x), sep=".")))
+}
+```
+
+Finally, recombine with the numeric variables to give our data matrix.
+
+```{r}
+natl_rep <- list()
+
+for (treat in treatments) {
+  # combine numeric and encoded group variables
+  natl_rep[[treat]] <- bind_cols(natl_num[[treat]], natl_grp_encodings[[treat]])
+  
+  # save model data
+  natl_rep_fname <- paste0("models/natl_rep/natl", year, ".", treat, ".rds")
+  write_rds(natl_rep[[treat]], natl_rep_fname, compress = "gz")
+}
+```
+
+```{r}
+head(natl_rep$cigar, 10)
+```
+
