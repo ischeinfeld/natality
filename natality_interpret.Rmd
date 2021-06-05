@@ -130,15 +130,18 @@ tibble(prop.hat.quantile = ecdf(tau.forest$W.hat)(tau.forest$W.hat),
 Since estimated treatment probabilities go very low (<1%) due to the fact that
 smoking is quite uncommon during pregnancy, treatment effects for some controls
 may not be well identified. For this reason, it can be helpful to look at the
-ATT (average treatment effect on the treated). Note that the point estimate is
-almost identical but the standard error is smaller (i.e. the effect is better
-identified.) TODO check / change
+ATT (average treatment effect on the treated). Note the smaller standard error.
+
+The point estimate of the ATT here is larger in magnitude than the ATE above,
+but still less than the untrustworthy difference-in-means estimate. This would
+seem to indicate that smoking mothers are predisposed to more severe effects of
+smoking on birth weight than mothers who do not smoke would be if they did.
 
 ```{r}
 average_treatment_effect(tau.forest, target.sample = "treated")
 ```
 
-# Treatment Effect Heterogeneity 
+# Treatment Effect Heterogeneity
 
 The calibration test indicates we are picking up meaningful heterogeneity.
 
@@ -146,14 +149,18 @@ The calibration test indicates we are picking up meaningful heterogeneity.
 test_calibration(tau.forest)
 ```
 
-The distribution of predicted causal effects is solidly negative which is what
-would be expected.
+The distribution of estimated conditional average treatment effect (CATE) values
+is solidly negative which is what we expect.
 
 ```{r}
 hist(tau.forest$predictions)
 ```
 
-Computing the best linear projections of the 
+Computing the best linear projections of the CATE onto all of the covariates,
+we see that a few variables have significant associates with the CATE. This
+implies that they account for heterogeneity in the treatment effect, and in the
+following sections we consider some of them. Note that the exact ranking is
+not statistically significant.
 
 ```{r}
 set.seed(157)
@@ -178,8 +185,8 @@ tau.blp %>%
 
 ## Live Birth Order and Mother's Age
 
-The three variables with the most significant associations with heterogeneity in
-the treatment effect are `dlivord` (what number live birth), `nlbnl` (number of
+Three variables with significant associations with heterogeneity in the
+treatment effect are `dlivord` (what number live birth), `nlbnl` (number of
 previous live births now living), and `dmage` (mother's age). The first two are
 extremely correlated since `dlivord = nlbnl + nlbnd + 1` where most previous
 live births are still alive.
@@ -191,7 +198,9 @@ natl %>%
   geom_jitter(alpha = 1/10)
 ```
 
-`dlivord` and `dmage` also correlated, although less highly.
+`dlivord` and `dmage` also correlated, although less highly. Some other variables
+with weaker associations are also highly correlated with these, such as `dfage`
+the father's age.
 
 ```{r}
 natl %>%
@@ -221,7 +230,8 @@ as.list(dlivord.values) %>%
   mutate(value = dlivord.values, 
          .before = estimate)  %>%
   inner_join(dlivord.table, by = "value") %>%
-  select(value, n, estimate, std.err)
+  select(value, n, estimate, std.err) %>%
+  rename(dlivord = value)
 ```
 
 Then `dmage`.
@@ -245,40 +255,133 @@ as.list(levels(dmage.quantiles)) %>%
   mutate(value = levels(dmage.quantiles), 
          .before = estimate)  %>%
   inner_join(dmage.table, by = "value") %>%
-  select(value, n, estimate, std.err)
+  select(value, n, estimate, std.err) %>%
+  rename(dmage = value)
 ```
 
-The ATE estimates do not change monotonically with either `dlivord` or `dmage`.
-This could be due to our model producing poor estimates (the standard errors
-are quite large compared to the differences in value), or there could be real
-nonlinearities in their relationships.
+The ATE estimates change somewhat monotonically with either `dlivord` or `dmage`,
+with older mothers and mothers with more previous children showing larger effects.
+Note that we have no way of separating the effect of smoking at a given age on
+birth weight from the cumulative effect of smoking prior to the pregnancy.
 
-#### Population Size of City of Residence
+## Medical Risk Factors
 
-Since this variable is a 5 level factor, we split by level.
+Three covariates in the "medical risk factors" section of the natality data
+show significant relationships with the CATE.
+
+Mothers with previous births over 4000g (`pre4000`) have a higher estimated causal effect.
 
 ```{r}
-# citrspop <- Xmod[,"citrspop"] %>% 
-#   table() %>%
-#   as_tibble() %>%
-#   rename(code = ".") %>%
-#   mutate(code = as.integer(code)) %>%
-#   mutate(value = case_when(
-#     code == 0 ~ "> 1M",
-#     code == 1 ~ "[500K, 1M]",
-#     code == 2 ~ "[250K, 500K]",
-#     code == 3 ~ "[100K, 250K]",
-#     code == 9 ~ "< 100K"
-#   ), .after = code)
+pre4000.values <- 0:1
+pre4000.table <- natl_rep$pre4000 %>% 
+  table() %>% 
+  as_tibble() %>%
+  rename(value = ".") %>%
+  mutate(value = as.numeric(value))
+
+as.list(pre4000.values) %>%
+  map_dfr(~ average_treatment_effect(tau.forest,
+                                     subset = natl_rep$pre4000 == .x)) %>%
+  mutate(value = pre4000.values, 
+         .before = estimate)  %>%
+  inner_join(pre4000.table, by = "value") %>%
+  select(value, n, estimate, std.err) %>%
+  rename(pre4000 = value)
+```
+
+However, note the very large standard error on the estimate for `pre4000`. This
+is due to both smoking and `pre4000` being quite rare.
+
+```{r}
+with(natl_rep, table(smoking_heavy, pre4000))
+```
+
+Similarly, eclampsia (`eclamp`) shows a significant correlation with the CATE,
+but the positive sample counts here are so small these estimates aren't meaningful.
+
+```{r}
+eclamp.values <- 0:1
+eclamp.table <- natl_rep$eclamp %>% 
+  table() %>% 
+  as_tibble() %>%
+  rename(value = ".") %>%
+  mutate(value = as.numeric(value))
+
+as.list(eclamp.values) %>%
+  map_dfr(~ average_treatment_effect(tau.forest,
+                                     subset = natl_rep$eclamp == .x)) %>%
+  mutate(value = eclamp.values, 
+         .before = estimate)  %>%
+  inner_join(eclamp.table, by = "value") %>%
+  select(value, n, estimate, std.err) %>%
+  rename(eclamp = value)
 ```
 
 ```{r}
-# as.list(citrspop$code) %>%
-#   map_dfr(~ average_treatment_effect(tau_bin.forest, 
-#                                  target.sample = "treated",
-#                                  subset = Xmod[,"citrspop"] == .x)) %>%
-#   mutate(value = citrspop$value, 
-#          .before = estimate) %>%
-#   inner_join(citrspop, by = "value") %>%
-#   select(code, value, n, estimate, std.err)
+with(natl_rep, table(smoking_heavy, eclamp))
+```
+
+Another medical risk factor significantly associated with the CATE is
+pregnancy-associated hypertension (`phyper`). The counts here are
+somewhat less imbalanced but the difference in ATE is still not significant
+compared to the standard errors.
+
+```{r}
+phyper.values <- 0:1
+phyper.table <- natl_rep$phyper %>% 
+  table() %>% 
+  as_tibble() %>%
+  rename(value = ".") %>%
+  mutate(value = as.numeric(value))
+
+as.list(phyper.values) %>%
+  map_dfr(~ average_treatment_effect(tau.forest,
+                                     subset = natl_rep$phyper == .x)) %>%
+  mutate(value = phyper.values, 
+         .before = estimate)  %>%
+  inner_join(phyper.table, by = "value") %>%
+  select(value, n, estimate, std.err) %>%
+  rename(phyper = value)
+```
+
+```{r}
+with(natl_rep, table(smoking_heavy, phyper))
+```
+
+## Racial Heterogeneity
+
+Even though the racial variables don't rank highest in terms of their
+association with the CATE, we calculate the ATE grouped by white and non-white.
+
+```{r}
+mrace <- natl$mrace %>%
+  table() %>%
+  as_tibble() %>%
+  rename(code = ".") %>%
+  mutate(code = as.integer(code)) %>%
+  mutate(value = case_when(
+    code == 1 ~ "White",
+    code == 2 ~ "Black",
+    code == 3 ~ "Native American",
+    code == 4 ~ "Chinese",
+    code == 5 ~ "Japanese",
+    code == 6 ~ "Hawaiian",
+    code == 18 ~ "East Indian",
+    code == 28 ~ "Korean",
+    code == 48 ~ "Vietnamese",
+  ), .after = code) %>%
+  filter(n > 500 & !is.na(value)) # only select named races with at least 500 samples
+```
+
+Even for races with a large number of samples, the differences in ATE estimates
+are not significant.
+
+```{r}
+as.list(mrace$code) %>%
+  map_dfr(~ average_treatment_effect(tau.forest,
+                                     subset = natl$mrace == .x)) %>%
+  mutate(value = mrace$value,
+         .before = estimate) %>%
+  inner_join(mrace, by = "value") %>%
+  select(code, value, n, estimate, std.err)
 ```

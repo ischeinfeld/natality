@@ -213,7 +213,7 @@ natl[["cigar"]] <- natl_full %>%
 # save model data
 for (treat in treatments) {
   natl_fname <- paste0("models/natl/natl", year, ".", treat, ".rds")
-  write_rds(natl$smoking_light, natl_fname, compress = "gz")
+  write_rds(natl[[treat]], natl_fname, compress = "gz")
 }
 ```
 

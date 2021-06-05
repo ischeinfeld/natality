@@ -338,7 +338,7 @@ natl[[&quot;cigar&quot;]] &lt;- natl_full %&gt;%
 # save model data
 for (treat in treatments) {
   natl_fname &lt;- paste0(&quot;models/natl/natl&quot;, year, &quot;.&quot;, treat, &quot;.rds&quot;)
-  write_rds(natl$smoking_light, natl_fname, compress = &quot;gz&quot;)
+  write_rds(natl[[treat]], natl_fname, compress = &quot;gz&quot;)
 }</code></pre>
 <p>The top 7 missing variables are mother’s place of birth, population size of county of occurrence, fathers race, origin, and age, and the mother’s vaginal herpes and uterine bleeding status. All other variables are missing in less than 6% of samples. (The continuous treatment data is shown in this example, but the two binary treatment datasets are similar.)</p>
 <pre class="r"><code>natl$cigar %&gt;%
