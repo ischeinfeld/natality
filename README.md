@@ -1,5 +1,5 @@
-# Maternal Smoking's Impact on Infant Birth Weight: \
-  A Causal Inference Case Study
+# Maternal Smoking's Impact on Infant Birth Weight:
+## A Causal Inference Case Study
 
 > This repository makes up a case study in using some recently developed
 > causal inference methods to estimate the effect of smoking
