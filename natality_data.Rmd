@@ -9,15 +9,12 @@ output:
 ```{r echo=TRUE, warning=FALSE, message=FALSE}
 knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE, comment=NA)
 
-library(ggplot2)   # plot
 library(dplyr)     # tables
 library(readr)     # reading
 library(stringr)   # strings
 library(purrr)     # fp
 library(tidyr)     # remove_na
 library(forcats)   # factor recode
-library(glmnet)    # lasso
-library(grf)       # random forests
 library(janitor)   # remove_constant columns
 library(corrplot)  # plot correlation matrix
 #library(sufrep)   # sufficient representations
