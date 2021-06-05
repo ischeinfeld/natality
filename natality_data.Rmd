@@ -65,13 +65,13 @@ preprocessing and filtering. Sampling at this stage speeds up the following
 steps since the full dataset is quite large (1.8GB).
 
 ```{r}
-subset <- FALSE
+subset <- TRUE
 
 subset_fname <- paste0("data/subset_rds/natl", year, ".rds")
 
 if (subset) {
   raw_fname <- paste0("data/raw_csv/natl", year, ".csv")
-  set.seed(50)
+  set.seed(74)
   # select a random sample
   natl_raw <- 
     read_csv(raw_fname, col_types = cols(.default = col_character())) %>%

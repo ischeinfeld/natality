@@ -31,7 +31,7 @@ Load the datasets and train the models. The code for training binary and
 continuous treatments is the same.
 
 ```{r}
-train <- FALSE
+train <- TRUE
 
 for (treat in treatments) {
   # load data
@@ -46,7 +46,7 @@ for (treat in treatments) {
   train_fname <- paste0("models/causal_forests/natl", year, treat, ".rds")
   if (train) {
     print(paste("Training", treat, "started", Sys.time()))
-    tau.forest <- causal_forest(Xmod, Ymod, Wmod, seed=318)
+    tau.forest <- causal_forest(Xmod, Ymod, Wmod, seed=318, num.trees = 3000)
     write_rds(tau.forest, train_fname)
   } else {
     print(paste("Loading", treat, "started", Sys.time()))

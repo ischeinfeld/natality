@@ -186,23 +186,66 @@ rm(list = ls())    # reset environment
 # Select binary and continuous treatments
 treatments &lt;- c(&quot;cigar&quot;, &quot;smoking_light&quot;, &quot;smoking_heavy&quot;)</code></pre>
 <p>Load the datasets and train the models. The code for training binary and continuous treatments is the same.</p>
-<pre class="r"><code>train &lt;- FALSE
+<pre class="r"><code>train &lt;- TRUE
 
-if (train) {
-  for (treat in treatments) {
+for (treat in treatments) {
+  # load data
+  natl_fname &lt;- paste0(&quot;models/natl_rep/natl&quot;, year, &quot;.&quot;, treat, &quot;.rds&quot;)
+  natl_rep &lt;- read_rds(natl_fname)
+  
+  Xmod &lt;- as.matrix(natl_rep %&gt;% select(-all_of(c(&quot;dbirwt&quot;, treat))))
+  Ymod &lt;- natl_rep[[&quot;dbirwt&quot;]]
+  Wmod &lt;- natl_rep[[treat]]
+  
+  # train or load forest
+  train_fname &lt;- paste0(&quot;models/causal_forests/natl&quot;, year, treat, &quot;.rds&quot;)
+  if (train) {
     print(paste(&quot;Training&quot;, treat, &quot;started&quot;, Sys.time()))
-    natl_fname &lt;- paste0(&quot;models/natl_rep/natl&quot;, year, &quot;.&quot;, treat, &quot;.rds&quot;)
-    natl_rep &lt;- read_rds(natl_fname)
-    
-    Xmod &lt;- as.matrix(natl_rep %&gt;% select(-all_of(c(&quot;dbirwt&quot;, treat))))
-    Ymod &lt;- natl_rep[[&quot;dbirwt&quot;]]
-    Wmod &lt;- natl_rep[[treat]]
-    
-    train_fname &lt;- paste0(&quot;models/causal_forests/natl&quot;, year, treat, &quot;.rds&quot;)
-    tau.forest &lt;- causal_forest(Xmod, Ymod, Wmod, seed=318)
+    tau.forest &lt;- causal_forest(Xmod, Ymod, Wmod, seed=318, num.trees = 3000)
     write_rds(tau.forest, train_fname)
+  } else {
+    print(paste(&quot;Loading&quot;, treat, &quot;started&quot;, Sys.time()))
+    tau.forest &lt;- read_rds(train_fname)
   }
+  
+  # test calibration
+  print(test_calibration(tau.forest))
 }</code></pre>
+<pre><code>[1] &quot;Training cigar started 2021-06-05 06:36:52&quot;
+
+Best linear fit using forest predictions (on held-out data)
+as well as the mean forest prediction as regressors, along
+with one-sided heteroskedasticity-robust (HC3) SEs:
+
+                               Estimate Std. Error t value    Pr(&gt;t)    
+mean.forest.prediction          1.00509    0.03245 30.9733 &lt; 2.2e-16 ***
+differential.forest.prediction  0.91842    0.15897  5.7775 3.803e-09 ***
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+[1] &quot;Training smoking_light started 2021-06-05 06:50:36&quot;
+
+Best linear fit using forest predictions (on held-out data)
+as well as the mean forest prediction as regressors, along
+with one-sided heteroskedasticity-robust (HC3) SEs:
+
+                               Estimate Std. Error t value    Pr(&gt;t)    
+mean.forest.prediction         0.993941   0.052467 18.9442 &lt; 2.2e-16 ***
+differential.forest.prediction 0.864944   0.228073  3.7924 7.464e-05 ***
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+
+[1] &quot;Training smoking_heavy started 2021-06-05 07:05:17&quot;
+
+Best linear fit using forest predictions (on held-out data)
+as well as the mean forest prediction as regressors, along
+with one-sided heteroskedasticity-robust (HC3) SEs:
+
+                               Estimate Std. Error t value    Pr(&gt;t)    
+mean.forest.prediction         0.997368   0.029762 33.5110 &lt; 2.2e-16 ***
+differential.forest.prediction 0.784128   0.161230  4.8634 5.778e-07 ***
+---
+Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1</code></pre>
 
 
 
