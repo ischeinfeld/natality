@@ -6,15 +6,9 @@ difference_in_means <- function(dataset, Yvar, Wvar) {
   n1 <- sum(as.integer(dplyr::pull(dataset, get(Wvar))))     # Number of obs in treatment
   n0 <- sum(1 - as.integer(dplyr::pull(dataset, get(Wvar)))) # Number of obs in control
   
-  # Difference in means is ATE
   tauhat <- mean(y1) - mean(y0)
-  
-  # 95% Confidence intervals
   se_hat <- sqrt( var(y0)/(n0-1) + var(y1)/(n1-1) )
-  lower_ci <- tauhat - 1.96 * se_hat
-  upper_ci <- tauhat + 1.96 * se_hat
-  
-  return(c(ATE = tauhat, lower_ci = lower_ci, upper_ci = upper_ci))
+  return(c(estimate = tauhat, std.err = se_hat))
 }
 
 ate_condmean_ols <- function(dataset, Yvar, Wvar) {
@@ -24,7 +18,7 @@ ate_condmean_ols <- function(dataset, Yvar, Wvar) {
                    data = df_mod_centered)
   tau.hat = as.numeric(coef(lm.interact)[Wvar])
   se.hat = as.numeric(sqrt(vcovHC(lm.interact)[Wvar, Wvar]))
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+  return(c(estimate = tau.hat, std.err = se.hat))
 }
 
 ipw <- function(dataset, Yvar, Wvar, p) {
@@ -33,7 +27,7 @@ ipw <- function(dataset, Yvar, Wvar, p) {
   G <- ((W - p) * Y) / (p * (1 - p))
   tau.hat <- mean(G)
   se.hat <- sqrt(var(G) / (length(G) - 1))
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+  return(c(estimate = tau.hat, std.err = se.hat))
 }
 
 prop_score_ols <- function(dataset, Yvar, Wvar, p) {
@@ -45,7 +39,7 @@ prop_score_ols <- function(dataset, Yvar, Wvar, p) {
   lm.fit <- lm(Y ~ W, data = dataset, weights = weights)
   tau.hat = as.numeric(coef(lm.fit)["W"])
   se.hat = as.numeric(sqrt(vcovHC(lm.fit)["W", "W"]))
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+  return(c(estimate = tau.hat, std.err = se.hat))
 }
 
 aipw_ols <- function(dataset, Yvar, Wvar, p) {
@@ -67,7 +61,7 @@ aipw_ols <- function(dataset, Yvar, Wvar, p) {
     ((dataset[[Wvar]] - p) * (dataset[[Yvar]] - actual_pred)) / (p * (1 - p))
   tau.hat <- mean(G)
   se.hat <- sqrt(var(G) / (length(G) - 1))
-  c(ATE=tau.hat, lower_ci = tau.hat - 1.96 * se.hat, upper_ci = tau.hat + 1.96 * se.hat)
+  return(c(estimate = tau.hat, std.err = se.hat))
 }
 
 cal_plot <- function(val, pred, name, bins = 4, lim = c(0,1)){

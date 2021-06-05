@@ -1,5 +1,6 @@
 ---
 title: 'US Natality Data: Causal Inference Case Study'
+subtitle: 'Analysis'
 output:
   html_document:
     df_print: paged
@@ -19,6 +20,7 @@ library(glmnet)    # lasso
 library(grf)       # random forests
 library(janitor)   # remove_constant columns
 library(corrplot)  # plot correlation matrix
+library(sandwich)  # robust covariance matrix
 #library(sufrep)   # sufficient representations
 source("make_encoder.R") # modified sufficient representations
 
@@ -29,106 +31,139 @@ source("utils.R")  # import helpers
 # are consistent when rerunning cells.
 ```
 
-# Load data and models
+This notebook implements a case study of some causal inference methods on an
+observational dataset, the
+[Vital Statistics Natality Birth Data](https://www.nber.org/research/data/vital-statistics-natality-birth-data).
+Specifically, we attempt to estimate the causal effect of a mother being a heavy
+smoker (vs. non-smoker) on infant birth weight, using data from 100,000 hospital
+births.
 
 ```{r}
-# In theory variable, currently only 2002 preprocessing implemented
-year <- 2002 
-
-# Select outcome and binary/continuous treatments
-# Code supports either tobacco/cigar or alcohol/drink treatments
-Yname <- "dbirwt"      # outcome
-Wname_bin <- "tobacco" # binary treatment
-Wname_cnt <- "cigar"   # continuous treatment
+year <- 2002
+treatment <- "smoking_heavy"
 ```
 
-Load full preprocessed natality data.
+Load data and models.
 
 ```{r}
-preprocessed_fname <- paste0("../data/preprocessed_rds/natl", year, ".rds")
-natl_full <- read_rds(preprocessed_fname)
-```
-
-The following variables will be considered in our analysis. Since the original
-natality dataset contains multiple codings for the same variables, here we
-select a single coding per variable of interest. Some other variables have been
-dropped as well, and ?/? of original data covariates are listed. 
-
-```{r}
-# load model data
-natl_fname <- paste0("../models/natl/natl", year, Wname_bin, "-", Wname_cnt, ".rds")
+# load data with original factors
+natl_fname <- paste0("models/natl/natl", year, ".", treatment, ".rds")
 natl <- read_rds(natl_fname)
+
+# load data with factors encoded
+natl_fname <- paste0("models/natl_rep/natl", year, ".", treatment, ".rds")
+natl_rep <- read_rds(natl_fname)
+
+# load model
+train_fname <- paste0("models/causal_forests/natl", year, treatment, ".rds")
+tau.forest <- read_rds(train_fname)
 ```
 
-Our models will require exclusively numeric-valued inputs, and we therefore need
-to encode group-valued variables as numeric. First we split the data into 
-variables that can be directly converted to numbers (i.e.numeric values, ordered
-factors, and binary factors) from those that require group encoding.
+# Averate Treatment Effect
+
+A first-pass naive attempt at making a causal estimate could simply look at a
+difference in means and ignore possible confounding. This would only be
+justified if the assignment of smoking / not smoking status was independent of
+the potential outcomes, i.e. the birth weight in either case. This assumption is
+almost certainly false, as numerous medical and socio-economic confounders could
+effect both smoking and health outcomes such as birth weight.
 
 ```{r}
-# save model data
-natl_rep_fname <- paste0("../models/natl_rep/natl", year, Wname_bin, "-", Wname_cnt, ".rds")
-natl_rep <- read_rds(natl_rep_fname)
+difference_in_means(natl_rep, Yvar="dbirwt", Wvar="smoking_heavy")
 ```
 
-Load trained models for binary and continuous treatments.
+Instead, we use a powerful non-parametric estimator: the causal forest (TODO
+CITE). When we control for our selected covariates using this model, a smaller
+magnitude average effect is estimated. This suggests that confounding is at play
+and that it likely contributes to the difference-in-means overestimating the
+causal effect.
 
 ```{r}
-Xmod <- as.matrix(natl_rep %>% select(-all_of(c(Yname, Wname_bin, Wname_cnt))))
-Ymod <- natl_rep[[Yname]]
-Wmod_bin <- natl_rep[[Wname_bin]]
-Wmod_cnt <- natl_rep[[Wname_cnt]]
-
-train_fname <- paste0("../models/causal_forests/natl", year, Wname_bin, ".rds")
-tau_bin.forest <- read_rds(train_fname)
-
-train_fname <- paste0("../models/causal_forests/natl", year, Wname_cnt, ".rds")
-tau_cnt.forest <- read_rds(train_fname)
+average_treatment_effect(tau.forest)
 ```
 
-# Analysis and Interpretation
-
-## Binary Treatment
-
-### Averate Treatment Effects
+Plotting the estimated smoking probabilities against mean outcomes for non-smoking
+mothers, we see that among them, those who are more likely to smoke (in the
+counterfactual sense) have lower birth weights. This suggests that confounding
+factors that make mothers more likely to smoke during pregnancy also cause lower
+birth weights. This lines up with the fact that the difference-in-means
+estimator overestimated the magnitude of the effect when compared with the
+causal forest.
 
 ```{r}
-average_treatment_effect(tau_bin.forest)
+tibble(prop.hat = tau.forest$W.hat,
+       mean.hat = tau.forest$Y.hat,
+       W = tau.forest$W.orig) %>%
+  # filter to untreated (non-smokers)
+  filter(W == 0) %>%
+  rename(mean0.hat = mean.hat) %>%
+  # plot
+  ggplot(aes(x = prop.hat, y = mean0.hat)) +
+  geom_point(alpha = 1/20) +
+  geom_quantile(formula = y ~ x, 
+                quantiles = c(0.5), 
+                show.legend=TRUE) +
+  coord_cartesian(xlim = c(0, 0.4), ylim = c(3000, 3800))
 ```
+
+And the same plot with estimated treatment propensities scaled by their empirical 
+cumulative distribution.
 
 ```{r}
-average_treatment_effect(tau_bin.forest, target.sample = "treated")
+tibble(prop.hat.quantile = ecdf(tau.forest$W.hat)(tau.forest$W.hat),
+       mean.hat = tau.forest$Y.hat,
+       W = tau.forest$W.orig) %>%
+  # filter to untreated (non-smokers)
+  filter(W == 0) %>% 
+  rename(mean0.hat = mean.hat) %>%
+  # plot
+  ggplot(aes(x = prop.hat.quantile, y = mean0.hat)) +
+  geom_point(alpha = 1/20) +
+  geom_quantile(formula = y ~ x, 
+                quantiles = c(0.5), 
+                show.legend=TRUE) +
+  coord_cartesian(xlim = c(0, 1), ylim = c(3000, 4000))
 ```
+
+# Averate Treatment Effect on the Treated
+
+Since estimated treatment probabilities go very low (<1%) due to the fact that
+smoking is quite uncommon during pregnancy, treatment effects for some controls
+may not be well identified. For this reason, it can be helpful to look at the
+ATT (average treatment effect on the treated). Note that the point estimate is
+almost identical but the standard error is smaller (i.e. the effect is better
+identified.) TODO check / change
 
 ```{r}
-importance <- variable_importance(tau_bin.forest)
-perm <- order(as.vector(importance), decreasing = TRUE)
-vars <- colnames(Xmod)[perm]
-importance <- importance[perm]
-
-tibble(vars = vars, importance = importance) %>%
-  head(10)
+average_treatment_effect(tau.forest, target.sample = "treated")
 ```
-### Treatment Effect Heterogeneity 
+
+# Treatment Effect Heterogeneity 
 
 The calibration test indicates we are picking up meaningful heterogeneity.
 
 ```{r}
-test_calibration(tau_bin.forest)
+test_calibration(tau.forest)
 ```
 
-Plotting the predicted values, the distribution is solidly on the negative side
-which is what would be expected from the medical literature. (TODO check know
-effect magnitude and heterogeneity).
+The distribution of predicted causal effects is solidly negative which is what
+would be expected.
 
 ```{r}
-tau_bin.blp.coefs <- as.list(colnames(Xmod)) %>%
-  # calculate best linear projections onto single variables
-  map(~ best_linear_projection(tau_bin.forest, 
-                               A = Xmod[,.x]))
+hist(tau.forest$predictions)
+```
 
-names(tau_bin.blp.coefs) <- colnames(Xmod)
-tau_bin.blp <- tau_bin.blp.coefs %>%
+Computing the best linear projections of the 
+
+```{r}
+set.seed(157)
+tau.blp.coefs <- as.list(colnames(tau.forest$X.orig)) %>%
+  # calculate best linear projections onto single variables
+  map(~ best_linear_projection(tau.forest, 
+                               A = tau.forest$X.orig[,.x]))
+names(tau.blp.coefs) <- colnames(tau.forest$X.orig)
+
+tau.blp <- tau.blp.coefs %>%
   # filter constant vars w no coefficient
   keep(~ dim(.x)[1] == 2) %>%
   # extract into tibble rows
@@ -137,76 +172,113 @@ tau_bin.blp <- tau_bin.blp.coefs %>%
                     std = .x["A1", "Std. Error"],
                     tst = .x["A1", "t value"],
                     prb = .x["A1", "Pr(>|t|)"]))
-tau_bin.blp %>%
-  arrange(desc(prb))
+tau.blp %>%
+  arrange(prb)
 ```
 
-As we are interested in interpreting these linear projections, we restrict to
-variables which were originally ordered types (i.e. ignoring group 
-representations).
+## Live Birth Order and Mother's Age
+
+The three variables with the most significant associations with heterogeneity in
+the treatment effect are `dlivord` (what number live birth), `nlbnl` (number of
+previous live births now living), and `dmage` (mother's age). The first two are
+extremely correlated since `dlivord = nlbnl + nlbnd + 1` where most previous
+live births are still alive.
 
 ```{r}
-tau_bin.blp.ord <- tau_bin.blp %>%
-  filter(!str_detect(var, "\\.")) %>%
-  arrange(desc(prb))
-tau_bin.blp.ord
+natl %>%
+  sample_n(10000) %>%
+  ggplot(aes(x = nlbnl, y = dlivord)) +
+  geom_jitter(alpha = 1/10)
 ```
 
-The two variables with the most significant associations with heterogeneity
-in the treatment effect are `citrspop` (Population Size of City of Residence)
-and `dmeduc`, (Education of Mother).
+`dlivord` and `dmage` also correlated, although less highly.
+
+```{r}
+natl %>%
+  sample_n(10000) %>%
+  ggplot(aes(x = dmage, y = dlivord)) +
+  geom_jitter(alpha = 1/10, width = 0.5, heigh = 0.5)
+```
+
+Since these variables have such a high correlation with heterogeneity in the 
+treatment effect, we can see that the estimated average effect changes
+significantly (in the practical sense) over their ranges.
+
+First `dlivord`.
+
+```{r}
+dlivord.values <- 1:5
+dlivord.table <- natl_rep$dlivord %>% 
+  table() %>% 
+  as_tibble() %>%
+  rename(value = ".") %>%
+  mutate(value = as.numeric(value))
+
+as.list(dlivord.values) %>%
+  map_dfr(~ average_treatment_effect(tau.forest,
+                                     subset = natl$dlivord == .x,
+                                     target.sample = "treated")) %>%
+  mutate(value = dlivord.values, 
+         .before = estimate)  %>%
+  inner_join(dlivord.table, by = "value") %>%
+  select(value, n, estimate, std.err)
+```
+
+Then `dmage`.
+
+```{r}
+quantiles <- 5
+probs <- (0:quantiles) / quantiles
+
+dmage.quantiles <- natl_rep$dmage %>% 
+  cut(quantile(., probs = probs, na.rm = TRUE), 
+      include.lowest = TRUE)
+
+dmage.table <- dmage.quantiles %>% 
+  table() %>% 
+  as_tibble() %>% 
+  rename(value = ".")
+
+as.list(levels(dmage.quantiles)) %>%
+  map_dfr(~ average_treatment_effect(tau.forest, 
+                                     subset = dmage.quantiles == .x)) %>%
+  mutate(value = levels(dmage.quantiles), 
+         .before = estimate)  %>%
+  inner_join(dmage.table, by = "value") %>%
+  select(value, n, estimate, std.err)
+```
+
+The ATE estimates do not change monotonically with either `dlivord` or `dmage`.
+This could be due to our model producing poor estimates (the standard errors
+are quite large compared to the differences in value), or there could be real
+nonlinearities in their relationships.
 
 #### Population Size of City of Residence
 
 Since this variable is a 5 level factor, we split by level.
 
 ```{r}
-citrspop <- Xmod[,"citrspop"] %>% 
-  table() %>%
-  as_tibble() %>%
-  rename(code = ".") %>%
-  mutate(code = as.integer(code)) %>%
-  mutate(value = case_when(
-    code == 0 ~ "> 1M",
-    code == 1 ~ "[500K, 1M]",
-    code == 2 ~ "[250K, 500K]",
-    code == 3 ~ "[100K, 250K]",
-    code == 9 ~ "< 100K"
-  ), .after = code)
+# citrspop <- Xmod[,"citrspop"] %>% 
+#   table() %>%
+#   as_tibble() %>%
+#   rename(code = ".") %>%
+#   mutate(code = as.integer(code)) %>%
+#   mutate(value = case_when(
+#     code == 0 ~ "> 1M",
+#     code == 1 ~ "[500K, 1M]",
+#     code == 2 ~ "[250K, 500K]",
+#     code == 3 ~ "[100K, 250K]",
+#     code == 9 ~ "< 100K"
+#   ), .after = code)
 ```
 
 ```{r}
-as.list(citrspop$code) %>%
-  map_dfr(~ average_treatment_effect(tau_bin.forest, 
-                                 target.sample = "treated",
-                                 subset = Xmod[,"citrspop"] == .x)) %>%
-  mutate(value = citrspop$value, 
-         .before = estimate) %>%
-  inner_join(citrspop, by = "value") %>%
-  select(code, value, n, estimate, std.err)
-```
-
-#### Education of Mother
-
-Since this data is integer valued, we split into quantiles.
-
-```{r}
-quantiles <- 5
-probs <- (0:quantiles) / quantiles
-
-dmeduc <- tibble(value = Xmod[,"dmeduc"]) %>% 
-  mutate(qtl = cut(value, quantile(value, probs = probs, na.rm = TRUE), include.lowest = TRUE))
-
-dmeduc.table <- dmeduc$qtl %>% table() %>% as_tibble() %>% rename(value = ".")
-```
-
-```{r}
-as.list(levels(dmeduc$qtl)) %>%
-  map_dfr(~ average_treatment_effect(tau_bin.forest, 
-                                 target.sample = "treated",
-                                 subset = dmeduc$qtl == .x)) %>%
-  mutate(value = levels(dmeduc$qtl), 
-         .before = estimate)  %>%
-  inner_join(dmeduc.table, by = "value") %>%
-  select(value, n, estimate, std.err)
+# as.list(citrspop$code) %>%
+#   map_dfr(~ average_treatment_effect(tau_bin.forest, 
+#                                  target.sample = "treated",
+#                                  subset = Xmod[,"citrspop"] == .x)) %>%
+#   mutate(value = citrspop$value, 
+#          .before = estimate) %>%
+#   inner_join(citrspop, by = "value") %>%
+#   select(code, value, n, estimate, std.err)
 ```

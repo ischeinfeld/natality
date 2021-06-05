@@ -31,9 +31,8 @@ This notebook preprocesses data from the Vital Statistics Natality Birth Data.
 It first takes a working subset of the raw source CSV and parses the columns to 
 their correct types (binary, numeric, ordered or unordered factor). 
 
-Births are filtered to those in hospitals with a medical doctor present. A new 
-variable `smoking` is created with three levels, `none, light, heavy`. Three
-datasets are created.
+A new variable `smoking` is created with three levels, `none, light, heavy`.
+Three datasets are created.
 
 1. Binary treatment `smoking_light`, this dataset only contains light and non-smokers.
 1. Binary treatment `smoking_heavy`, this dataset only contains heavy and non-smokers.
@@ -87,8 +86,10 @@ This mostly just fixes the factor levels to match those described in the data
 [documentation](https://data.nber.org/natality/2002/natl2002.pdf). It does make
 some changes to two variables as noted at the top of the preprocessing code.
 
+Also filter to singleton births and add treatment variables.
+
 ```{r}
-preprocess <- FALSE
+preprocess <- TRUE
 
 preprocessed_fname <- paste0("data/preprocessed_rds/natl", year, ".rds")
 
@@ -99,8 +100,8 @@ if (preprocess) {
     # preprocess natl, fix types / levels and modify variables (monpre, dmar)
     preprocess_natl() %>%
     
-    # filter to hospital birth with doctor attending
-    filter(pldel == 1 && birattnd == 1) %>%
+    # filter to singleton births to maintain independent samples
+    filter(dplural == 1) %>%
     
     # add NEW variables
     mutate(
@@ -152,8 +153,7 @@ covariates <- list(
               "orfath",     # Hispanic Origin of Father
               "frace"),     # Race of Father
   child =   c("dgestat",    # Gestation - Detail in Weeks
-              "csex",       # Sex
-              "dplural"),   # Plurality
+              "csex"),      # Sex
   med_rsk = c("anemia",     # Anemia (Hct.<30/Hgb.<10)
               "cardiac",    # Cardiac disease
               "lung",       # Acute or chronic lung disease

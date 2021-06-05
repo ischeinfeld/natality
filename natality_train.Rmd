@@ -31,21 +31,30 @@ Load the datasets and train the models. The code for training binary and
 continuous treatments is the same.
 
 ```{r}
-train <- TRUE
+train <- FALSE
 
-if (train) {
-  for (treat in treatments) {
-    print(paste("Training ", treat, Sys.time()))
-    natl_fname <- paste0("models/natl_rep/natl", year, ".", treat, ".rds")
-    natl_rep <- read_rds(natl_fname)
-    
-    Xmod <- as.matrix(natl_rep %>% select(-all_of(c("dbirwt", treat))))
-    Ymod <- natl_rep[["dbirwt"]]
-    Wmod <- natl_rep[[treat]]
-    
-    train_fname <- paste0("models/causal_forests/natl", year, treat, ".rds")
+for (treat in treatments) {
+  # load data
+  natl_fname <- paste0("models/natl_rep/natl", year, ".", treat, ".rds")
+  natl_rep <- read_rds(natl_fname)
+  
+  Xmod <- as.matrix(natl_rep %>% select(-all_of(c("dbirwt", treat))))
+  Ymod <- natl_rep[["dbirwt"]]
+  Wmod <- natl_rep[[treat]]
+  
+  # train or load forest
+  train_fname <- paste0("models/causal_forests/natl", year, treat, ".rds")
+  if (train) {
+    print(paste("Training", treat, "started", Sys.time()))
     tau.forest <- causal_forest(Xmod, Ymod, Wmod, seed=318)
     write_rds(tau.forest, train_fname)
+  } else {
+    print(paste("Loading", treat, "started", Sys.time()))
+    tau.forest <- read_rds(train_fname)
   }
+  
+  # test calibration
+  print(test_calibration(tau.forest))
 }
 ```
+
