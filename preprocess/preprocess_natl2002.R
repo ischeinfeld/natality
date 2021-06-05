@@ -1,25 +1,36 @@
 ################################################################
 # This file provides preprocessing code to load natl2002.csv.
-# Note that not all variables are read in.
+# Note that not all available variables are read in.
 # The following variables have their levels modified:
 #   monpre - new scale is numeric, number of months of prenatal care
 #   dmar - collapsed puerto rico 2 and 3 to match US coding
 ################################################################
 
-# determines formatting for factor levels padding w/ 0 as needed
+# Some columns use 0-padded integers and some do not. I'm not
+# sure why, but we the following two functions generate the levels 
+# for either type.
+#   Unpadded: c("0", "1", "2", "3", "99")
+#   Padded: c("0", "1", "2") or c("00", "01", "02", "03", "99")
+
+# Levels for unpadded ints
 lev_unpadded <- function(ints) {
   as.character(ints)
 }
 
+# Levels for padded ints
 lev_padded <- function(ints) {
   n_char <- nchar(paste(max(ints)))
   levs <- as.character(ints)
   str_pad(levs, n_char, side = "left", pad = "0")
 }
 
-# recode binary factors
+# Recode binary factors
 fct_cond <- function(f) {
-  f %>% fct_relevel("2", "1") %>% fct_recode(yes = "1", no = "2")
+  fact <- f %>% 
+    fct_relevel("2", "1")
+  
+  case_when(fact == "1" ~ TRUE,
+            fact == "2" ~ FALSE)
 }
 
 preprocess_natl <- function(natl_raw) {
@@ -38,14 +49,14 @@ preprocess_natl <- function(natl_raw) {
               divres = factor(divres, levels = lev_padded(1:9)),
               stnatexp = factor(stnatexp, levels = lev_padded(c(1:55,62:63))),
               citrspop = factor(citrspop, ordered = TRUE, levels = lev_padded(c(0:3,9))),
-              metrores = factor(metrores, levels = lev_padded(1:2)),
+              metrores = factor(metrores, levels = lev_padded(1:2)) %>% fct_cond(),
               cntrspop = factor(cntrspop, ordered = TRUE, levels = lev_padded(c(0:5,9))),
               dmage = as.integer(dmage),
               ormoth = factor(ormoth, levels = lev_padded(0:5)),
               mrace = factor(mrace, levels = lev_unpadded(c(0:8,18,28,38,48,58,68,78))),
               mrace3 = factor(mrace3, levels = lev_padded(1:3)),
               dmeduc = as.integer(dmeduc) %>% na_if(99),
-              dmar = as.integer(dmar) %>% na_if(9) %>% pmin(2) %>% factor(levels = lev_padded(1:2)),
+              dmar = as.integer(dmar) %>% na_if(9) %>% pmin(2) %>% factor(levels = lev_padded(1:2)) %>% fct_cond(),
               mplbir = factor(mplbir, levels = lev_padded(c(1:54,61:62))),
               adequacy = factor(adequacy, ordered = TRUE, levels = lev_padded(1:3)),
               nlbnl = as.integer(nlbnl) %>% na_if(99),
@@ -87,6 +98,7 @@ preprocess_natl <- function(natl_raw) {
               # other risk factors
               tobacco = factor(tobacco, levels = lev_padded(1:2)) %>% fct_cond(),
               cigar = as.integer(cigar) %>% na_if(99),
+              cigar10 = (as.integer(cigar) %>% na_if(99)) >= 10,
               alcohol = factor(alcohol, levels = lev_padded(1:2)) %>% fct_cond(),
               drink = as.integer(drink) %>% na_if(99),
               wtgain = as.integer(wtgain) %>% na_if(99),
