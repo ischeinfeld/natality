@@ -8,8 +8,8 @@ during pregnancy on infant birth weight.
 The dataset preparation, training, and analysis code can be found in
 the following three Rmarkdown notebooks.
 
-[*Notebook: Dataset preparation*](https://ischeinfeld.github.io/natality/natality_data.html)
-[*Notebook: Training causal forests*](https://ischeinfeld.github.io/natality/natality_train.html)
+[*Notebook: Dataset preparation*](https://ischeinfeld.github.io/natality/natality_data.html)<br/>
+[*Notebook: Training causal forests*](https://ischeinfeld.github.io/natality/natality_train.html)<br/>
 [*Notebook: Analysis of average and individual effects*](https://ischeinfeld.github.io/natality/natality_interpret.html)
 
 ## Setting
@@ -29,9 +29,11 @@ Estimating the causal effect of SDP on birth weight is complicated by the fact
 that both SDP and infant birth weight are potentially impacted by numerous
 biological and environmental factors. Most studies attempt to control for
 confounding in some way, for example using regression models with a set of
-covariates. [jaddoe, kataoka] Jaddoe et al., for example, control for maternal
-age, height, ethnicity, parity and infant gender, all of which are known to
-effect birth weight. [jaddoe]
+covariates.
+[[Jaddoe](https://doi.org/10.1111/j.1365-3016.2007.00916.x),
+ [Kataoka](https://doi.org/10.1186/s12884-018-1694-4)]
+Jaddoe et al., for example, control for maternal age, height, ethnicity, parity
+and infant gender, all of which are known to effect birth weight. 
 
 Other approaches have been used to attempt to estimate the causal effect as
 well. For example, Juarez and Merlo conduct both a regression-based analysis
@@ -39,14 +41,17 @@ and a quasi-experimental sibling analysis using mother-specific multilevel
 linear regression on pairs of births where the mother's SDP status changed.
 Their sibling analysis showed a similar but somewhat smaller magnitude effect
 compared to their regression analysis, which could indicate that the latter
-did not sufficiently control for confounding. [juarez] While this approach
-should control for genetic confounders, the assumption that environmental
-factors remain fixed for mothers between births is especially suspect since
-their change in smoking status could be associated with a changing environment.
+did not sufficiently control for confounding. 
+[[Juarez](https://doi.org/10.1371/journal.pone.0061734)]
+While this approach should control for genetic confounders, the assumption that
+environmental factors remain fixed for mothers between births is especially
+suspect since their change in smoking status could be associated with a
+changing environment.
 
 Some randomized experimental studies also provide evidence for SDP's effect on
 birth weight, although since SDP itself cannot be randomized these studies
-usually randomize interventions intended to prevent SDP. [lumley]
+usually randomize interventions intended to prevent SDP.
+[[Lumley](https://doi.org/10.1002/14651858.CD001055.pub3)]
 
 ### Dataset
 
