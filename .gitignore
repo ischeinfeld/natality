@@ -1,6 +1,9 @@
 models/
 data/
 
+# Mac
+*.DS_Store
+
 # History files
 .Rhistory
 .Rapp.history
