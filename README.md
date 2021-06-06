@@ -125,19 +125,32 @@ treatment (they have separate data for the first and third trimesters).
 The causal forest calibration is good enough that we can be confident it
 is picking up at least some significant heterogeneity in the signal.
 
-> Best linear fit using forest predictions (on held-out data)
-> as well as the mean forest prediction as regressors, along
-> with one-sided heteroskedasticity-robust (HC3) SEs:
-> 
->                                Estimate Std. Error t value    Pr(>t)    
-> mean.forest.prediction         0.997368   0.029762 33.5110 < 2.2e-16 ***
-> differential.forest.prediction 0.784128   0.161230  4.8634 5.778e-07 ***
-
 The distribution of predicted conditional average treatment effects (CATE)
 is concentrated mostly in the (-300g, -100g) range, which seems reasonable
 given the expected effect sizes.
 
 ![CATE](images/CATE.png)
+
+Two variables with significant linear associations with the predicted CATE are
+parity (number of to-term pregnancies) and mother's age. Groupwise ATE
+estimates are as follows.
+
+| dmage   | n     | estimate  | std.err  | 
+| ------- | ----- | --------- | -------- | 
+| [10,21] | 20243 | -155.3205 | 18.30547 |
+| (21,25] | 21009 | -155.9506 | 16.90007 |
+| (25,29] | 21423 | -178.7270 | 26.40490 |
+| (29,33] | 20239 | -242.4721 | 28.97829 |
+| (33,54] | 17086 | -247.6665 | 26.47239 |
+
+dlivord     n       estimate        std.err
+1   40632   -187.2538   10.77753
+2   32612   -202.6679   10.91414
+3   16500   -234.6373   13.88215
+4   6128    -258.3118   22.62397
+5   2151    -286.6694   37.00665
+
+
 
 ## Next Steps
 
