@@ -5,6 +5,13 @@ This repository makes up a case study in using some recently developed
 causal inference methods to estimate the effect of smoking
 during pregnancy on infant birth weight. 
 
+The dataset preparation, training, and analysis code can be found in
+the following three Rmarkdown notebooks.
+
+[*Notebook: Dataset preparation*](https://ischeinfeld.github.io/natality/natality_data.html)
+[*Notebook: Training causal forests*](https://ischeinfeld.github.io/natality/natality_train.html)
+[*Notebook: Analysis of average and individual effects*](https://ischeinfeld.github.io/natality/natality_interpret.html)
+
 ## Setting
 
 ### Smoking during pregnancy and birth weight
@@ -13,7 +20,10 @@ Low birthweight is an important risk factor for perinatal morbidity and
 mortality, and maternal smoking during pregnancy (SDP) is known to be one of
 the most signficant modifiable causes. While the effect of SDP on birth weight
 is well known, the chemical and biological linkages are not well understood. 
-[jaddoe, juarez, lumley, kataoka]
+[[Jaddoe](https://doi.org/10.1111/j.1365-3016.2007.00916.x),
+ [Juarez](https://doi.org/10.1371/journal.pone.0061734), 
+ [Lumley](https://doi.org/10.1002/14651858.CD001055.pub3),
+ [Kataoka](https://doi.org/10.1186/s12884-018-1694-4)]
 
 Estimating the causal effect of SDP on birth weight is complicated by the fact
 that both SDP and infant birth weight are potentially impacted by numerous
