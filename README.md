@@ -57,8 +57,8 @@ usually randomize interventions intended to prevent SDP.
 
 [*Notebook: Dataset preparation*](https://ischeinfeld.github.io/natality/natality_data.html)
 
-We use the [Vital Statistics Natality Birth
-Data](https://www.nber.org/research/data/vital-statistics-natality-birth-data)
+We use the 
+[Vital Statistics Natality Birth Data](https://www.nber.org/research/data/vital-statistics-natality-birth-data)
 dataset, which provides demographic and health data for births in the United
 States. Since 1985, this includes data corresponding to 100% of birth
 certificates.
@@ -67,7 +67,8 @@ certificates.
 > attainment of parents, marital status, live-birth order, race, sex, and
 > geographic area. Health data include items such as birth weight, gestation,
 > prenatal care, attendant at birth, and Apgar score. Geographic data includes
-> state, county, [], and metropolitan and nonmetropolitan counties." [natality]
+> state, county, [], and metropolitan and nonmetropolitan counties."
+> [Vital Statistics Natality Birth Data](https://www.nber.org/research/data/vital-statistics-natality-birth-data)
 
 The breadth of variables available could make controlling for confounding more
 reasonable than where less data is available, with the current analysis taking
@@ -95,26 +96,48 @@ treating them as special values in the subsequent analysis.
 
 ### Causal forests
 
-TODO introduce [grf](https://github.com/grf-labs/grf).
+TODO introduce [causal forests and generalized random forests.](https://github.com/grf-labs/grf).
 
 ### Missing values
 
-TODO introduce [missing values](https://arxiv.org/abs/1910.10624).
+TODO introduce [causal inference with missing values.](https://arxiv.org/abs/1910.10624).
 
 ### Group variable encoding
 
-TODO introduce [sufrep](https://github.com/grf-labs/sufrep).
+TODO introduce [sufficient representations of group variables.](https://github.com/grf-labs/sufrep).
 
-## Results
+## Results Summary
 [*Notebook: Analysis of average and individual effects*](https://ischeinfeld.github.io/natality/natality_interpret.html)
 
 ### Average effects
 
-TODO add summary.
+The causal forest gives an average treatment effect (ATE) estimate for heavy
+smoking of -193g (std 10.6), compared with -230g given by the naive
+difference-in-means estimator. A similar treatment effect considered by Juarez
+and Merlo (smoking > 9 cigarettes a day duiring both the first and third
+trimester) yielded estimates of the ATE of -303g using a regression analysis
+and -226g using a sibling study. Note that their data differs in collection
+methods, population (the study took place in Sweden), and the granularity of
+treatment (they have separate data for the first and third trimesters).
 
 ### Effect heterogeneity
 
-TODO add summary.
+The causal forest calibration is good enough that we can be confident it
+is picking up at least some significant heterogeneity in the signal.
+
+> Best linear fit using forest predictions (on held-out data)
+> as well as the mean forest prediction as regressors, along
+> with one-sided heteroskedasticity-robust (HC3) SEs:
+> 
+>                                Estimate Std. Error t value    Pr(>t)    
+> mean.forest.prediction         0.997368   0.029762 33.5110 < 2.2e-16 ***
+> differential.forest.prediction 0.784128   0.161230  4.8634 5.778e-07 ***
+
+The distribution of predicted conditional average treatment effects (CATE)
+is concentrated mostly in the (-300g, -100g) range, which seems reasonable
+given the expected effect sizes.
+
+![CATE](images/CATE.png)
 
 ## Next Steps
 
