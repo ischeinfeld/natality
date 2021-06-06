@@ -135,7 +135,7 @@ Two variables with significant linear associations with the predicted CATE are
 parity (number of to-term pregnancies) and mother's age. Groupwise ATE
 estimates are as follows. The greater effect of environmental tobacco smoke
 on birth weight in older mothers has already been shown. 
-[Ahluwalia](https://doi.org/10.1093/oxfordjournals.aje.a009190)
+[[Ahluwalia](https://doi.org/10.1093/oxfordjournals.aje.a009190)]
 
 | age     | n     | estimate  | std.err  | 
 | ------- | ----- | --------- | -------- | 
