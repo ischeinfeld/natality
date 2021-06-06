@@ -40,6 +40,8 @@ usually randomize interventions intended to prevent SDP. [lumley]
 
 ### Dataset
 
+[Dataset preparation](https://ischeinfeld.github.io/natality/natality_data.html)
+
 We use the [Vital Statistics Natality Birth
 Data](https://www.nber.org/research/data/vital-statistics-natality-birth-data)
 dataset, which provides demographic and health data for births in the United
@@ -52,23 +54,58 @@ certificates.
 > prenatal care, attendant at birth, and Apgar score. Geographic data includes
 > state, county, [], and metropolitan and nonmetropolitan counties." [natality]
 
-[Dataset preparation](https://ischeinfeld.github.io/natality/natality_data.html)
+The breadth of variables available could make controlling for confounding more
+reasonable than where less data is available, with the current analysis taking
+into account 45 covariates in addition to treatment and outcome. However, it
+must be noted that confounders such as genetics would remain uncontrolled for.
+
+A full discussion of how reasonable the unconfoundedness despite missingness
+assumptions required by the method described below is outside the scope of
+this case study. However, the approach is mostly a technical extension of the
+commonly used regression-based approaches insofar as it requires similar
+assumptions about the data.
+
+### Sample
+
+Following Juarez and Merlo, we consider the effect on birth weight of heavy
+smoking (defined as reporting smoking > 9 cigarettes per day) compared to not
+smoking at all. This means we omit light smokers from our datasets.
+
+For computational efficiency, we uniformly sample 100,000 singleton births with
+reported cigarettes per day and birth weight. We keep NA values in covariates,
+treating them as special values in the subsequent analysis.
 
 ## Methods
 [Training causal forests](https://ischeinfeld.github.io/natality/natality_train.html)
 
 ### Causal forests
 
+TODO introduce [grf](https://github.com/grf-labs/grf).
+
 ### Missing values
+
+TODO introduce [missing values](https://arxiv.org/abs/1910.10624).
+
+### Group variable encoding
+
+TODO introduce [sufrep](https://github.com/grf-labs/sufrep).
 
 ## Results
 [Analysis of average and individual effects](https://ischeinfeld.github.io/natality/natality_interpret.html)
 
 ### Average effects
 
+TODO add summary.
+
 ### Effect heterogeneity
 
+TODO add summary.
+
 ## Next Steps
+
+TODO add.
+- variable selection
+- increase data size 
 
 ## Citations
 
