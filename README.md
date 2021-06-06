@@ -135,7 +135,7 @@ Two variables with significant linear associations with the predicted CATE are
 parity (number of to-term pregnancies) and mother's age. Groupwise ATE
 estimates are as follows.
 
-| dmage   | n     | estimate  | std.err  | 
+| age     | n     | estimate  | std.err  | 
 | ------- | ----- | --------- | -------- | 
 | [10,21] | 20243 | -155.3205 | 18.30547 |
 | (21,25] | 21009 | -155.9506 | 16.90007 |
@@ -143,20 +143,28 @@ estimates are as follows.
 | (29,33] | 20239 | -242.4721 | 28.97829 |
 | (33,54] | 17086 | -247.6665 | 26.47239 |
 
-dlivord     n       estimate        std.err
-1   40632   -187.2538   10.77753
-2   32612   -202.6679   10.91414
-3   16500   -234.6373   13.88215
-4   6128    -258.3118   22.62397
-5   2151    -286.6694   37.00665
+| parity |  n     | estimate  | std.err  | 
+| ------ | ------ | --------- | -------- |
+| 1      | 40632  | -187.2538 | 10.77753 |
+| 2      | 32612  | -202.6679 | 10.91414 |
+| 3      | 16500  | -234.6373 | 13.88215 |
+| 4      | 6128   | -258.3118 | 22.62397 |
+| 5      | 2151   | -286.6694 | 37.00665 |
 
-
+Other variables also show significant relationships, for example previous
+births over 4000g, eclampsia, and pregnancy-associated hypertension. However,
+the counts of births with these risk factors to smoking mothers is so low that
+these estimates are not trustworth given the data size. This is reflected in
+their group-level ATE estimates having very large standard errors for the
+positive case.
 
 ## Next Steps
 
-TODO add.
-- variable selection
-- increase data size 
+The next logical step in the analysis are to improve variable selection,
+primarily to allow for larger training samples (since the forest estimators are
+primarily RAM limited on my laptop). This would allow both better ATE and CATE
+estimates, as well as more power for the heterogeneity analysis for highly
+imbalanced covariates.
 
 ## Citations
 
@@ -180,3 +188,4 @@ TODO add.
   <div class="csl-entry">National Center for Health Statistics. “Data File Documentations, Natality, 2002.” National Center for Health Statistics, Hyattsville, Maryland., 2002.</div>
   <span class="Z3988" title="url_ver=Z39.88-2004&amp;ctx_ver=Z39.88-2004&amp;rfr_id=info%3Asid%2Fzotero.org%3A2&amp;rft_val_fmt=info%3Aofi%2Ffmt%3Akev%3Amtx%3Adc&amp;rft.type=document&amp;rft.title=Data%20File%20Documentations%2C%20Natality%2C%202002&amp;rft.publisher=National%20Center%20for%20Health%20Statistics%2C%20Hyattsville%2C%20Maryland.&amp;rft.au=undefined&amp;rft.date=2002"></span>
 </div>
+
