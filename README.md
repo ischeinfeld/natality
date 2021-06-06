@@ -1,9 +1,9 @@
 # Maternal Smoking's Impact on Infant Birth Weight:
 ## A Causal Inference Case Study
 
-> This repository makes up a case study in using some recently developed
-> causal inference methods to estimate the effect of smoking
-> during pregnancy on infant birth weight. 
+This repository makes up a case study in using some recently developed
+causal inference methods to estimate the effect of smoking
+during pregnancy on infant birth weight. 
 
 ## Setting
 
@@ -46,11 +46,11 @@ dataset, which provides demographic and health data for births in the United
 States. Since 1985, this includes data corresponding to 100% of birth
 certificates.
 
-"Demographic data include variables such as date of birth, age and educational
-attainment of parents, marital status, live-birth order, race, sex, and
-geographic area. Health data include items such as birth weight, gestation,
-prenatal care, attendant at birth, and Apgar score. Geographic data includes
-state, county, [], and metropolitan and nonmetropolitan counties." [natality]
+> "Demographic data include variables such as date of birth, age and educational
+> attainment of parents, marital status, live-birth order, race, sex, and
+> geographic area. Health data include items such as birth weight, gestation,
+> prenatal care, attendant at birth, and Apgar score. Geographic data includes
+> state, county, [], and metropolitan and nonmetropolitan counties." [natality]
 
 [Dataset preparation](https://ischeinfeld.github.io/natality/natality_data.html)
 
