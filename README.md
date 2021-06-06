@@ -40,7 +40,7 @@ usually randomize interventions intended to prevent SDP. [lumley]
 
 ### Dataset
 
-[Dataset preparation](https://ischeinfeld.github.io/natality/natality_data.html)
+[*Notebook: Dataset preparation*](https://ischeinfeld.github.io/natality/natality_data.html)
 
 We use the [Vital Statistics Natality Birth
 Data](https://www.nber.org/research/data/vital-statistics-natality-birth-data)
@@ -76,7 +76,7 @@ reported cigarettes per day and birth weight. We keep NA values in covariates,
 treating them as special values in the subsequent analysis.
 
 ## Methods
-[Training causal forests](https://ischeinfeld.github.io/natality/natality_train.html)
+[*Notebook: Training causal forests*](https://ischeinfeld.github.io/natality/natality_train.html)
 
 ### Causal forests
 
@@ -91,7 +91,7 @@ TODO introduce [missing values](https://arxiv.org/abs/1910.10624).
 TODO introduce [sufrep](https://github.com/grf-labs/sufrep).
 
 ## Results
-[Analysis of average and individual effects](https://ischeinfeld.github.io/natality/natality_interpret.html)
+[*Notebook: Analysis of average and individual effects*](https://ischeinfeld.github.io/natality/natality_interpret.html)
 
 ### Average effects
 
