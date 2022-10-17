@@ -1,12 +1,16 @@
 # Maternal Smoking's Impact on Infant Birth Weight:
 ## A Causal Inference Case Study
 
-This repository makes up a case study in using some recently developed
-causal inference methods to estimate the effect of smoking
-during pregnancy on infant birth weight. 
+This repository presents a case study in applying causal forests, a recently
+developed causal inference method, along with the method of sufficient
+representation for categorical variables, to estimate the effect of smoking
+during pregnancy on infant birth weight. In addition to comparing estimates for
+the average treatment effect to those found in the literature, we consider the
+average treatment effect on the treated, and attempt to identify treatment
+heterogeneity across covariates.
 
-The dataset preparation, training, and analysis code can be found in
-the following three Rmarkdown notebooks.
+The dataset preparation, training, and analysis code can be found in the
+following three Rmarkdown notebooks.
 
 [*Notebook: Dataset preparation*](https://ischeinfeld.github.io/natality/natality_data.html)<br/>
 [*Notebook: Training causal forests*](https://ischeinfeld.github.io/natality/natality_train.html)<br/>
@@ -57,8 +61,8 @@ usually randomize interventions intended to prevent SDP.
 
 [*Notebook: Dataset preparation*](https://ischeinfeld.github.io/natality/natality_data.html)
 
-We use the 
-[Vital Statistics Natality Birth Data](https://www.nber.org/research/data/vital-statistics-natality-birth-data)
+We use the [Vital Statistics Natality Birth
+Data](https://www.nber.org/research/data/vital-statistics-natality-birth-data)
 dataset, which provides demographic and health data for births in the United
 States. Since 1985, this includes data corresponding to 100% of birth
 certificates.
@@ -75,36 +79,101 @@ reasonable than where less data is available, with the current analysis taking
 into account 45 covariates in addition to treatment and outcome. However, it
 must be noted that confounders such as genetics would remain uncontrolled for.
 
-A full discussion of how reasonable the unconfoundedness despite missingness
-assumptions required by the method described below is outside the scope of
-this case study. However, the approach is mostly a technical extension of the
-commonly used regression-based approaches insofar as it requires similar
-assumptions about the data.
+A brief discussion of the plausability of the assumptions required by the methods 
+applied in this case study is given in the methods section. A full argument is
+outside the scope of this case study, and in fact there may be good reasons not
+to believe that the necessary assumptions hold. However, the approach is mostly
+a technical extension of the regression-based approaches we compare with
+insofar as it requires similar assumptions about the data.
 
 ### Sample
 
-Following Juarez and Merlo, we consider the effect on birth weight of heavy
-smoking (defined as reporting smoking > 9 cigarettes per day) compared to not
-smoking at all. This means we omit light smokers from our datasets.
+Following Juarez and Merlo, for our primary analysis we consider the effect on
+birth weight of heavy smoking (defined as reporting smoking > 9 cigarettes per
+day) compared to not smoking at all. This means we omit light smokers from our
+datasets. We also train models for other definitions of treatment.
 
 For computational efficiency, we uniformly sample 100,000 singleton births with
 reported cigarettes per day and birth weight. We keep NA values in covariates,
-treating them as special values in the subsequent analysis.
+treating them as special values in the subsequent analysis as motivated by an
+assumption described below.
 
 ## Methods
 [*Notebook: Training causal forests*](https://ischeinfeld.github.io/natality/natality_train.html)
 
 ### Causal forests
 
-TODO introduce [causal forests and generalized random forests.](https://github.com/grf-labs/grf).
+We apply causal forests, as described
+[here](https://projecteuclid.org/euclid.aos/1547197251) and as implemented by
+the [grf](https://github.com/grf-labs/grf) package. Causal forests are a
+non-parametric method for the estimation of heterogenous treatment effects in
+observational studies. They require two primary assumptions: unconfoundedness
+and overlap.
+
+Unconfoundedness requires that, conditioned on observed covariates, treatment
+and potential outcomes are independent. Even with expert knowledge, it can be
+difficult to argue for unconfoundedness. Here we will be content to note that
+we are controlling for many demographic variables and a large set of variables
+arguably picked as medically relevant to childbirth. We acknowledge that we
+cannot control for genetics, and as such our results should be interpreted
+skeptically. 
+
+Overlap requires that there is a minimum probability that each member of the
+population under study is treated and not treated, i.e. that treatment
+probabilities (propensities) are uniformly bounded away from 0 and 1. While
+this assumption is easier to argue for than unconfoundedness (it seems
+plausible that no covariates make smoking during pregnancy impossible or
+guaranteed), our model does estimate very low smoking probabilites for some
+members of our dataset. This can make estimating treatment effects challenging
+for those very unlikely to smoke.
 
 ### Missing values
 
-TODO introduce [causal inference with missing values.](https://arxiv.org/abs/1910.10624).
+As is the case with many real datasets, the US Natality data contains a
+significant number of missing values across many different variables. For this
+case study, we choose to assume unconfoundedness despite missignness, i.e. that
+missing attributes do to break the unconfoundedness assumption described above.
+
+This is not the only way to handle missing values in causal inference, for a
+discussion see this [paper.](https://arxiv.org/abs/1910.10624). Here it is an
+expedient choice since tree-based estimators such as causal forests can easily
+treat missing values and the proofs for their consistency apply without
+modification under unconfoundedness despite missingness.
+
+Whether this assumption is reasonable for our data is a difficult question. Let
+us consider, for example, two types of missingness mechanisms we could find in
+our dataset. First, assume a covariate is only ommitted when it considered
+medically irrelevant. It might be reasonable to assume that the potential
+outcomes are independent of its true value conditioned on the recorded value
+and whether it is missing. This condition, termed conditional independence of
+outcome in the paper above, implies unconfoundedness despite missingness.
+Second, consider a covariate which is ommitted due to variation in reporting
+practices between hospitals. If this variable was important for controlling
+confounding, it may not be reasonable that unconfoundedness holds despite
+missingness.
+
+It turns out that a large proportion of missingness in our data can be
+explained by regional variations in reporting. This could suggest that an
+imputation-based approach might be more suitable. However, where this reporting
+difference is systematic it would be impossible to properly impute missing
+values, since there would not be any data from which to estimate the
+conditional distribution.
 
 ### Group variable encoding
 
-TODO introduce [sufficient representations of group variables.](https://github.com/grf-labs/sufrep).
+Many of the variables in the US Natality data are high-dimensional categorical
+variables, for example US state. Causal forests, like many other machine
+learning algorithms, require real-valued variable vectors as inputs. While this
+is often achieved by using a one-hot encoding, where each category is mapped to
+a separate dimension, this can be highly inefficient when the number of
+categories is large. In this study, we apply the method of sufficient
+representation described in this [paper](), as implemented in the package
+[sufrep](https://github.com/grf-labs/sufrep). This approach is suitable where a
+categorical variable only effects the estimation target via some unobserved
+latent variable. This seems reasonable, for example, in the case of a variable
+representing US states, where one could assume that the probability of smoking
+and its effects both only depended on state through some state properties such
+as demographics, healthcare quality, or smoking laws.
 
 ## Results Summary
 [*Notebook: Analysis of average and individual effects*](https://ischeinfeld.github.io/natality/natality_interpret.html)
@@ -119,6 +188,15 @@ trimester) yielded estimates of the ATE of -303g using a regression analysis
 and -226g using a sibling study. Note that their data differs in collection
 methods, population (the study took place in Sweden), and the granularity of
 treatment (they have separate data for the first and third trimesters).
+
+Since estimated treatment probabilities go very low (<1%) due to the fact that
+smoking is quite uncommon during pregnancy, treatment effects for some controls
+may not be well identified. For this reason, it can be helpful to look at the
+average treatment effect on the treated (ATT). The point estimate of the ATT
+here is -214g (std 6.2), which is larger in magnitude than the ATE above, with
+a smaller standard error. This would seem to indicate that smoking mothers are
+predisposed to more severe effects of smoking on birth weight than mothers who
+do not smoke would be if they did.
 
 ### Effect heterogeneity
 
