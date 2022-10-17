@@ -59,8 +59,6 @@ usually randomize interventions intended to prevent SDP.
 
 ### Dataset
 
-[*Notebook: Dataset preparation*](https://ischeinfeld.github.io/natality/natality_data.html)
-
 We use the [Vital Statistics Natality Birth
 Data](https://www.nber.org/research/data/vital-statistics-natality-birth-data)
 dataset, which provides demographic and health data for births in the United
@@ -99,7 +97,6 @@ treating them as special values in the subsequent analysis as motivated by an
 assumption described below.
 
 ## Methods
-[*Notebook: Training causal forests*](https://ischeinfeld.github.io/natality/natality_train.html)
 
 ### Causal forests
 
@@ -135,7 +132,7 @@ case study, we choose to assume unconfoundedness despite missignness, i.e. that
 missing attributes do to break the unconfoundedness assumption described above.
 
 This is not the only way to handle missing values in causal inference, for a
-discussion see this [paper.](https://arxiv.org/abs/1910.10624). Here it is an
+discussion see this [paper](https://arxiv.org/abs/1910.10624). Here it is an
 expedient choice since tree-based estimators such as causal forests can easily
 treat missing values and the proofs for their consistency apply without
 modification under unconfoundedness despite missingness.
@@ -176,7 +173,6 @@ and its effects both only depended on state through some state properties such
 as demographics, healthcare quality, or smoking laws.
 
 ## Results Summary
-[*Notebook: Analysis of average and individual effects*](https://ischeinfeld.github.io/natality/natality_interpret.html)
 
 ### Average effects
 
